@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { resolvePhoneNumber } from "../lib/zaloRelay.js";
-import { findOrCreateContact, updateContactZaloUid } from "../lib/leadconnector.js";
+import { findOrCreateContact, updateContactZaloUid, addContactTag } from "../lib/leadconnector.js";
 import { signSession } from "../middleware/session.js";
 
 const router = Router();
@@ -21,6 +21,19 @@ router.post("/zalo", async (req, res) => {
     if (idByOA) {
       updateContactZaloUid(contact.id, idByOA).catch((err) =>
         console.error("[auth/zalo] failed to sync idByOA:", err.message)
+      );
+    }
+
+    // Tag every login (best-effort, never blocks the response) so a GHL
+    // Workflow can trigger nurture off "someone opened the Mini App" as its
+    // own event, not only off scorecard completion — a lead who opens the
+    // app but abandons before finishing an assessment still gets captured.
+    addContactTag(contact.id, "Nguồn: Zalo Mini App").catch((err) =>
+      console.error("[auth/zalo] tag failed:", err.message)
+    );
+    if (isNew) {
+      addContactTag(contact.id, "Lead mới: Mini App").catch((err) =>
+        console.error("[auth/zalo] new-lead tag failed:", err.message)
       );
     }
 
