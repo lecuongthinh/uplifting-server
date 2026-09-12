@@ -5,6 +5,7 @@ import authRoutes from "./routes/auth.js";
 import scorecardRoutes from "./routes/scorecards.js";
 import contentRoutes from "./routes/content.js";
 import memberRoutes from "./routes/member.js";
+import contentAdminRoutes from "./routes/contentAdmin.js";
 
 const app = express();
 
@@ -28,6 +29,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/scorecards", scorecardRoutes);
 app.use("/api/content", contentRoutes);
 app.use("/api/member", memberRoutes);
+app.use("/admin/content", contentAdminRoutes);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
