@@ -18,15 +18,27 @@ router.post("/data", async (req, res) => {
     { data: courses, error: e2 },
     { data: lessons, error: e3 },
     { data: scorecards, error: e4 },
+    { data: settings, error: e5 },
   ] = await Promise.all([
     supabase.from("articles").select("*").order("published_at", { ascending: false }),
     supabase.from("courses").select("*").order("sort_order"),
     supabase.from("lessons").select("*").order("sort_order"),
     supabase.from("scorecard_configs").select("*").order("created_at"),
+    supabase.from("app_settings").select("*").order("key"),
   ]);
-  const error = e1 || e2 || e3 || e4;
+  const error = e1 || e2 || e3 || e4 || e5;
   if (error) return res.status(500).json({ message: error.message });
-  res.json({ articles, courses, lessons, scorecards });
+  res.json({ articles, courses, lessons, scorecards, settings });
+});
+
+router.post("/settings", async (req, res) => {
+  if (!checkSecret(req, res)) return;
+  const { values } = req.body || {};
+  if (!values || typeof values !== "object") return res.status(400).json({ message: "Thiếu dữ liệu" });
+  const rows = Object.entries(values).map(([key, value]) => ({ key, value: String(value ?? "") }));
+  const { error } = await supabase.from("app_settings").upsert(rows, { onConflict: "key" });
+  if (error) return res.status(500).json({ message: error.message });
+  res.json({ saved: true });
 });
 
 // slug is the natural unique key — the same "save" endpoint both creates
@@ -126,6 +138,51 @@ router.post("/lessons/delete", async (req, res) => {
   res.json({ ok: true });
 });
 
+// Checks the exact shape computeScorecardResult() and the Mini App's
+// scorecard-take/scorecard-result pages read from — not just "does the key
+// exist". A config that passes the old shallow check (top-level keys present)
+// could still crash the app with a blank screen if e.g. scale.labels was
+// missing or areas used the wrong field names (this happened once with a
+// config drafted in a different shape — see
+// project_uplifting_coaching_miniapp memory). Returns an error string
+// pinpointing the bad field, or null if the config is safe to save.
+function validateScorecardConfig(config) {
+  if (!config || typeof config !== "object") return "Cấu hình phải là một object JSON";
+  if (typeof config.title !== "string" || !config.title.trim()) return 'Cấu hình thiếu "title" (chuỗi, hiển thị trên đầu trang làm bài)';
+
+  const { scale } = config;
+  if (!scale || typeof scale.min !== "number" || typeof scale.max !== "number" || scale.max <= scale.min) {
+    return '"scale.min" và "scale.max" phải là số, và scale.max phải lớn hơn scale.min';
+  }
+  const expectedLabels = scale.max - scale.min + 1;
+  if (!Array.isArray(scale.labels) || scale.labels.length !== expectedLabels) {
+    return `"scale.labels" phải là mảng đúng ${expectedLabels} nhãn (một nhãn cho mỗi mức điểm từ ${scale.min} đến ${scale.max})`;
+  }
+
+  if (!Array.isArray(config.areas) || config.areas.length === 0) return '"areas" phải là mảng có ít nhất 1 mảng câu hỏi';
+  for (const area of config.areas) {
+    if (typeof area.key !== "string" || !area.key.trim()) return 'Mỗi mảng trong "areas" cần có "key" (chuỗi, không dấu, dùng làm mã nội bộ)';
+    if (typeof area.label !== "string" || !area.label.trim()) return `Mảng "${area.key}" thiếu "label" (tên hiển thị)`;
+    if (!Array.isArray(area.statements) || area.statements.length === 0 || area.statements.some((s) => typeof s !== "string" || !s.trim())) {
+      return `Mảng "${area.key}" cần "statements" là mảng câu phát biểu (chuỗi), không được để trống`;
+    }
+  }
+
+  if (!Array.isArray(config.tiers) || config.tiers.length === 0) return '"tiers" phải là mảng có ít nhất 1 mức kết quả';
+  for (const tier of config.tiers) {
+    if (typeof tier.min !== "number" || typeof tier.max !== "number") return 'Mỗi mức trong "tiers" cần "min" và "max" là số';
+    if (typeof tier.name !== "string" || !tier.name.trim()) return 'Mỗi mức trong "tiers" cần "name" (tên hiển thị)';
+  }
+
+  if (!Array.isArray(config.areaBands) || config.areaBands.length === 0) return '"areaBands" phải là mảng có ít nhất 1 mức nhận xét theo mảng';
+  for (const band of config.areaBands) {
+    if (typeof band.max !== "number") return 'Mỗi mức trong "areaBands" cần "max" là số (điểm tối đa của mức đó)';
+    if (typeof band.message !== "string" || !band.message.trim()) return 'Mỗi mức trong "areaBands" cần "message" (nhận xét hiển thị)';
+  }
+
+  return null;
+}
+
 // Scorecards have no delete button in the UI on purpose — scorecard_results
 // rows reference a config by slug (see sql/001_init.sql), so deleting one
 // that someone has already completed would orphan their history. Deactivate
@@ -141,11 +198,8 @@ router.post("/scorecards", async (req, res) => {
   } catch (err) {
     return res.status(400).json({ message: "Cấu hình JSON không hợp lệ: " + err.message });
   }
-  for (const key of ["scale", "areas", "tiers", "areaBands"]) {
-    if (!parsedConfig || !parsedConfig[key]) {
-      return res.status(400).json({ message: `Cấu hình JSON thiếu trường bắt buộc "${key}"` });
-    }
-  }
+  const validationError = validateScorecardConfig(parsedConfig);
+  if (validationError) return res.status(400).json({ message: validationError });
   const { error } = await supabase
     .from("scorecard_configs")
     .upsert({ slug, title, description, is_active: !!is_active, config: parsedConfig }, { onConflict: "slug" });
@@ -273,6 +327,22 @@ router.get("/", (_req, res) => {
       <button class="btn-secondary" id="s_cancel" style="display:none">Huỷ sửa</button>
       <div id="s_msg" class="msg"></div>
     </fieldset>
+
+    <h2>Cài đặt hiển thị</h2>
+    <p class="muted">Đổi chữ ở đây sẽ hiện ngay trên app, không cần đăng bản cập nhật mới.</p>
+    <fieldset>
+      <legend>Banner khoá nội dung (hiện dưới cuối trang khoá học có bài bị khoá)</legend>
+      <label>Tiêu đề banner <input id="set_lock_banner_title" /></label>
+      <label>Mô tả banner <textarea id="set_lock_banner_desc"></textarea></label>
+    </fieldset>
+    <fieldset>
+      <legend>Hộp thoại khi bấm vào bài học bị khoá</legend>
+      <label>Tiêu đề hộp thoại <input id="set_lock_modal_title" /></label>
+      <label>Mô tả hộp thoại <textarea id="set_lock_modal_desc"></textarea></label>
+    </fieldset>
+    <label>Chữ trên nút kêu gọi hành động (dùng chung cho cả hai) <input id="set_lock_cta_label" /></label>
+    <button class="btn-primary" id="set_save">Lưu cài đặt hiển thị</button>
+    <div id="set_msg" class="msg"></div>
   </div>
 
   <script>
@@ -524,6 +594,24 @@ router.get("/", (_req, res) => {
       } catch (err) { showMsg('s_msg', 'Lỗi: ' + err.message, false); }
     });
 
+    // ================= Cài đặt hiển thị =================
+    const SETTINGS_KEYS = ['lock_banner_title', 'lock_banner_desc', 'lock_modal_title', 'lock_modal_desc', 'lock_cta_label'];
+    function renderSettings() {
+      const bySettingKey = Object.fromEntries((state.settings || []).map(s => [s.key, s.value]));
+      for (const key of SETTINGS_KEYS) {
+        const el = document.getElementById('set_' + key);
+        if (el && bySettingKey[key] !== undefined) el.value = bySettingKey[key];
+      }
+    }
+    document.getElementById('set_save').addEventListener('click', async () => {
+      try {
+        const values = Object.fromEntries(SETTINGS_KEYS.map(key => [key, document.getElementById('set_' + key).value]));
+        await api('/settings', { values });
+        showMsg('set_msg', 'Đã lưu!', true);
+        load();
+      } catch (err) { showMsg('set_msg', 'Lỗi: ' + err.message, false); }
+    });
+
     async function load() {
       document.getElementById('loadMsg').textContent = 'Đang tải...';
       try {
@@ -531,7 +619,7 @@ router.get("/", (_req, res) => {
         state = await api('/data', {});
         document.getElementById('app').style.display = 'block';
         document.getElementById('loadMsg').textContent = '';
-        renderArticles(); renderCourses(); renderLessons(); renderScorecards();
+        renderArticles(); renderCourses(); renderLessons(); renderScorecards(); renderSettings();
       } catch (err) {
         document.getElementById('loadMsg').textContent = 'Lỗi: ' + err.message;
       }

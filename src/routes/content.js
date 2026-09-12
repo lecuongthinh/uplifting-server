@@ -9,6 +9,27 @@ const router = Router();
 // this route layer never changes when a course or article is added/edited
 // through the content-admin page (/admin/content, see contentAdmin.js).
 
+// Small pieces of UI copy (lock banner/modal text) editable from the admin
+// page without a Mini App rebuild — see sql/004_app_settings.sql. Defaults
+// here mean a fresh row-less deploy still renders sensible text.
+const SETTINGS_DEFAULTS = {
+  lock_banner_title: "Còn nội dung nâng cao phía sau 🔒",
+  lock_banner_desc:
+    "Để lại thông tin qua bài đánh giá miễn phí — Uplifting sẽ liên hệ hướng dẫn anh/chị đăng ký để mở khoá toàn bộ nội dung.",
+  lock_modal_title: "Nội dung nâng cao 🔒",
+  lock_modal_desc:
+    "Bài học này nằm trong phần nâng cao, cần đăng ký mới xem được. Làm bài đánh giá miễn phí để Uplifting tư vấn và hướng dẫn anh/chị mở khoá.",
+  lock_cta_label: "Làm bài đánh giá miễn phí",
+};
+
+router.get("/settings", async (_req, res) => {
+  const { data, error } = await supabase.from("app_settings").select("key, value");
+  if (error) return res.status(500).json({ message: error.message });
+  const settings = { ...SETTINGS_DEFAULTS };
+  for (const row of data) settings[row.key] = row.value;
+  res.json(settings);
+});
+
 router.get("/courses", async (_req, res) => {
   const { data, error } = await supabase
     .from("courses")
