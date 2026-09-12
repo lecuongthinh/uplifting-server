@@ -20,7 +20,18 @@ export async function resolvePhoneNumber(phoneToken, accessToken) {
     const { data } = await axios.post(
       `${process.env.RELAY_URL}/resolve-phone.php`,
       { phoneToken, accessToken },
-      { headers: { "x-relay-secret": process.env.RELAY_SHARED_SECRET } }
+      {
+        headers: {
+          "x-relay-secret": process.env.RELAY_SHARED_SECRET,
+          // Imunify360 (AZDIGI's bot-protection, sitting in front of the
+          // relay) blocks requests from Render's shared outbound IP range
+          // that look bot-like — axios's default has no User-Agent at all,
+          // which reads as automation. A descriptive one plus the IP-range
+          // whitelist (see reference_azdigi_cpanel_nodejs_nproc_gotcha /
+          // project_uplifting_coaching_miniapp memory) are both needed.
+          "User-Agent": "UpliftingServer/1.0 (+https://uplifting-server.onrender.com)",
+        },
+      }
     );
     return data.number;
   } catch (err) {
