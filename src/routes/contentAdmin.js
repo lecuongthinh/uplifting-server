@@ -13,20 +13,26 @@ function checkSecret(req, res) {
 
 router.post("/data", async (req, res) => {
   if (!checkSecret(req, res)) return;
-  const [{ data: articles, error: e1 }, { data: courses, error: e2 }, { data: lessons, error: e3 }] =
-    await Promise.all([
-      supabase.from("articles").select("*").order("published_at", { ascending: false }),
-      supabase.from("courses").select("*").order("sort_order"),
-      supabase.from("lessons").select("*").order("sort_order"),
-    ]);
-  const error = e1 || e2 || e3;
+  const [
+    { data: articles, error: e1 },
+    { data: courses, error: e2 },
+    { data: lessons, error: e3 },
+    { data: scorecards, error: e4 },
+  ] = await Promise.all([
+    supabase.from("articles").select("*").order("published_at", { ascending: false }),
+    supabase.from("courses").select("*").order("sort_order"),
+    supabase.from("lessons").select("*").order("sort_order"),
+    supabase.from("scorecard_configs").select("*").order("created_at"),
+  ]);
+  const error = e1 || e2 || e3 || e4;
   if (error) return res.status(500).json({ message: error.message });
-  res.json({ articles, courses, lessons });
+  res.json({ articles, courses, lessons, scorecards });
 });
 
-// slug is the natural unique key — resubmitting the form with the same
-// slug updates it (upsert), so "add" and "edit" are the same action and
-// there's no separate edit UI to build.
+// slug is the natural unique key — the same "save" endpoint both creates
+// and edits (upsert), so the client is responsible for locking the slug
+// field once editing an existing row (see the page's JS) — otherwise
+// changing it here would silently create a new row instead of updating.
 router.post("/articles", async (req, res) => {
   if (!checkSecret(req, res)) return;
   const { slug, title, excerpt, body, cover_image_url, is_published } = req.body;
@@ -99,9 +105,57 @@ router.post("/lessons", async (req, res) => {
   res.json({ saved: true });
 });
 
+// Separate from /lessons (insert-only) since a lesson has no natural slug
+// to upsert on — editing an existing one updates by its uuid instead.
+router.post("/lessons/update", async (req, res) => {
+  if (!checkSecret(req, res)) return;
+  const { id, title, video_url, body, sort_order } = req.body;
+  if (!id || !title) return res.status(400).json({ message: "Thiếu id hoặc tiêu đề bài học" });
+  const { error } = await supabase
+    .from("lessons")
+    .update({ title, video_url: video_url || null, body, sort_order: Number(sort_order) || 0 })
+    .eq("id", id);
+  if (error) return res.status(500).json({ message: error.message });
+  res.json({ saved: true });
+});
+
 router.post("/lessons/delete", async (req, res) => {
   if (!checkSecret(req, res)) return;
   const { error } = await supabase.from("lessons").delete().eq("id", req.body.id);
+  if (error) return res.status(500).json({ message: error.message });
+  res.json({ ok: true });
+});
+
+// Scorecards have no delete button in the UI on purpose — scorecard_results
+// rows reference a config by slug (see sql/001_init.sql), so deleting one
+// that someone has already completed would orphan their history. Deactivate
+// (is_active=false) instead — reversible, and getScorecards() already
+// filters to is_active so it just stops appearing as a new option.
+router.post("/scorecards", async (req, res) => {
+  if (!checkSecret(req, res)) return;
+  const { slug, title, description, is_active, config } = req.body;
+  if (!slug || !title) return res.status(400).json({ message: "Thiếu slug hoặc tiêu đề" });
+  let parsedConfig;
+  try {
+    parsedConfig = typeof config === "string" ? JSON.parse(config) : config;
+  } catch (err) {
+    return res.status(400).json({ message: "Cấu hình JSON không hợp lệ: " + err.message });
+  }
+  for (const key of ["scale", "areas", "tiers", "areaBands"]) {
+    if (!parsedConfig || !parsedConfig[key]) {
+      return res.status(400).json({ message: `Cấu hình JSON thiếu trường bắt buộc "${key}"` });
+    }
+  }
+  const { error } = await supabase
+    .from("scorecard_configs")
+    .upsert({ slug, title, description, is_active: !!is_active, config: parsedConfig }, { onConflict: "slug" });
+  if (error) return res.status(500).json({ message: error.message });
+  res.json({ saved: true });
+});
+
+router.post("/scorecards/toggle", async (req, res) => {
+  if (!checkSecret(req, res)) return;
+  const { error } = await supabase.from("scorecard_configs").update({ is_active: req.body.is_active }).eq("slug", req.body.slug);
   if (error) return res.status(500).json({ message: error.message });
   res.json({ ok: true });
 });
@@ -114,22 +168,32 @@ router.get("/", (_req, res) => {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Quản trị nội dung — Uplifting</title>
 <style>
-  body { font-family: -apple-system, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 20px; color: #1f2430; }
+  body { font-family: -apple-system, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 20px; color: #1f2430; }
   h1 { font-size: 22px; }
-  h2 { font-size: 17px; margin-top: 40px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
+  h2 { font-size: 17px; margin-top: 44px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
   label { display: block; margin-top: 12px; font-weight: 600; font-size: 13px; }
   input, textarea, select { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; font-family: inherit; font-size: 14px; }
+  input:disabled { background: #f3f2ee; color: #888; }
   textarea { min-height: 80px; }
-  button { margin-top: 16px; padding: 9px 18px; cursor: pointer; }
+  textarea.code { font-family: ui-monospace, monospace; font-size: 12.5px; min-height: 260px; }
+  button { padding: 9px 18px; cursor: pointer; }
+  .btn-primary { margin-top: 16px; background: #c07a1e; color: #fff; border: none; border-radius: 6px; }
+  .btn-secondary { margin-top: 16px; margin-left: 8px; background: #eee; border: none; border-radius: 6px; }
+  .btn-small { padding: 3px 10px; font-size: 12px; border: 1px solid #ddd; background: #fff; border-radius: 5px; }
+  .btn-small.danger { border-color: #e0b3a8; color: #a23b2e; }
   table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
-  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
-  .row { display: flex; gap: 6px; align-items: center; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
   .muted { color: #888; font-size: 12px; }
   .msg { margin-top: 8px; font-size: 13px; white-space: pre-wrap; }
+  .msg.error { color: #a23b2e; }
+  .msg.ok { color: #2f7d54; }
   .checkbox-row { display: flex; align-items: center; gap: 6px; margin-top: 12px; }
   .checkbox-row input { width: auto; margin: 0; }
   fieldset { border: 1px solid #eee; border-radius: 8px; padding: 14px 16px; margin-top: 16px; }
   legend { font-weight: 700; font-size: 13px; padding: 0 6px; }
+  .editing-banner { display: none; background: #fdf3e4; border: 1px solid #f0d9ae; border-radius: 6px; padding: 8px 12px; font-size: 13px; margin-top: 12px; }
+  .editing-banner.show { display: block; }
+  .actions { display: flex; gap: 6px; }
 </style>
 </head>
 <body>
@@ -137,30 +201,32 @@ router.get("/", (_req, res) => {
   <label>Mật khẩu quản trị
     <input type="password" id="secret" />
   </label>
-  <button id="loadBtn">Tải dữ liệu</button>
+  <button class="btn-primary" id="loadBtn">Tải dữ liệu</button>
   <div id="loadMsg" class="msg"></div>
 
   <div id="app" style="display:none">
+
     <h2>Bài viết</h2>
     <table id="articlesTable"><thead><tr><th>Tiêu đề</th><th>Hiện</th><th></th></tr></thead><tbody></tbody></table>
     <fieldset>
-      <legend>Thêm / cập nhật bài viết</legend>
-      <p class="muted">Nhập lại đúng "Đường dẫn (slug)" của bài đã có để sửa bài đó, thay vì tạo bài mới.</p>
+      <legend>Thêm bài viết mới</legend>
+      <div id="a_editing" class="editing-banner">Đang sửa bài viết có sẵn — sửa xong bấm "Cập nhật", hoặc "Huỷ" để bỏ.</div>
       <label>Đường dẫn (slug, không dấu, không khoảng trắng) <input id="a_slug" placeholder="vi-du-bai-viet" /></label>
       <label>Tiêu đề <input id="a_title" /></label>
       <label>Tóm tắt ngắn <input id="a_excerpt" /></label>
       <label>Nội dung <textarea id="a_body"></textarea></label>
       <label>Link ảnh bìa (tuỳ chọn) <input id="a_cover" /></label>
       <div class="checkbox-row"><input type="checkbox" id="a_published" checked /><label style="margin:0">Hiển thị ngay</label></div>
-      <button id="a_save">Lưu bài viết</button>
+      <button class="btn-primary" id="a_save">Thêm bài viết</button>
+      <button class="btn-secondary" id="a_cancel" style="display:none">Huỷ sửa</button>
       <div id="a_msg" class="msg"></div>
     </fieldset>
 
     <h2>Khoá học</h2>
     <table id="coursesTable"><thead><tr><th>Tiêu đề</th><th>Miễn phí</th><th>Hiện</th><th></th></tr></thead><tbody></tbody></table>
     <fieldset>
-      <legend>Thêm / cập nhật khoá học</legend>
-      <p class="muted">Nhập lại đúng slug đã có để sửa, thay vì tạo khoá mới.</p>
+      <legend>Thêm khoá học mới</legend>
+      <div id="c_editing" class="editing-banner">Đang sửa khoá học có sẵn — sửa xong bấm "Cập nhật", hoặc "Huỷ" để bỏ.</div>
       <label>Đường dẫn (slug) <input id="c_slug" placeholder="ten-khoa-hoc" /></label>
       <label>Tiêu đề <input id="c_title" /></label>
       <label>Mô tả <textarea id="c_desc"></textarea></label>
@@ -168,7 +234,8 @@ router.get("/", (_req, res) => {
       <label>Thứ tự hiển thị (số nhỏ hiện trước) <input id="c_sort" type="number" value="1" /></label>
       <div class="checkbox-row"><input type="checkbox" id="c_free" checked /><label style="margin:0">Miễn phí</label></div>
       <div class="checkbox-row"><input type="checkbox" id="c_published" checked /><label style="margin:0">Hiển thị ngay</label></div>
-      <button id="c_save">Lưu khoá học</button>
+      <button class="btn-primary" id="c_save">Thêm khoá học</button>
+      <button class="btn-secondary" id="c_cancel" style="display:none">Huỷ sửa</button>
       <div id="c_msg" class="msg"></div>
     </fieldset>
 
@@ -176,20 +243,40 @@ router.get("/", (_req, res) => {
     <div id="lessonsByCourse"></div>
     <fieldset>
       <legend>Thêm bài học mới</legend>
+      <div id="l_editing" class="editing-banner">Đang sửa bài học có sẵn — sửa xong bấm "Cập nhật", hoặc "Huỷ" để bỏ.</div>
       <label>Thuộc khoá học <select id="l_course"></select></label>
       <label>Tiêu đề bài học <input id="l_title" /></label>
-      <label>Link video (tuỳ chọn) <input id="l_video" placeholder="https://..." /></label>
+      <label>Link video (tuỳ chọn — dán link YouTube bình thường cũng được) <input id="l_video" placeholder="https://..." /></label>
       <label>Nội dung / ghi chú <textarea id="l_body"></textarea></label>
       <label>Thứ tự trong khoá <input id="l_sort" type="number" value="1" /></label>
-      <button id="l_save">Thêm bài học</button>
+      <button class="btn-primary" id="l_save">Thêm bài học</button>
+      <button class="btn-secondary" id="l_cancel" style="display:none">Huỷ sửa</button>
       <div id="l_msg" class="msg"></div>
+    </fieldset>
+
+    <h2>Đánh giá (Assessment)</h2>
+    <p class="muted">Không có nút xoá cố ý — kết quả khách đã làm gắn với bộ này, xoá sẽ mất lịch sử của họ. Muốn ẩn thì bỏ "Đang dùng".</p>
+    <table id="scorecardsTable"><thead><tr><th>Tiêu đề</th><th>Đang dùng</th><th></th></tr></thead><tbody></tbody></table>
+    <fieldset>
+      <legend>Thêm bộ đánh giá mới</legend>
+      <div id="s_editing" class="editing-banner">Đang sửa bộ đánh giá có sẵn — sửa xong bấm "Cập nhật", hoặc "Huỷ" để bỏ.</div>
+      <label>Đường dẫn (slug) <input id="s_slug" placeholder="ten-bo-danh-gia" /></label>
+      <label>Tiêu đề <input id="s_title" /></label>
+      <label>Mô tả ngắn <input id="s_desc" /></label>
+      <div class="checkbox-row"><input type="checkbox" id="s_active" checked /><label style="margin:0">Đang dùng (hiện cho khách chọn)</label></div>
+      <label>Cấu hình chi tiết (JSON — mảng câu hỏi, thang điểm, ngưỡng kết quả)
+        <textarea class="code" id="s_config" placeholder='{"scale": {...}, "areas": [...], "tiers": [...], "areaBands": [...]}'></textarea>
+      </label>
+      <p class="muted">Chỉ sửa nếu quen thuộc với định dạng JSON — sai định dạng sẽ báo lỗi và không lưu, không làm hỏng dữ liệu hiện có.</p>
+      <button class="btn-primary" id="s_save">Thêm bộ đánh giá</button>
+      <button class="btn-secondary" id="s_cancel" style="display:none">Huỷ sửa</button>
+      <div id="s_msg" class="msg"></div>
     </fieldset>
   </div>
 
   <script>
     const secretInput = document.getElementById('secret');
     secretInput.value = localStorage.getItem('content_admin_secret') || '';
-
     function secret() { return secretInput.value; }
 
     async function api(path, body) {
@@ -203,79 +290,61 @@ router.get("/", (_req, res) => {
       return data;
     }
 
-    let state = { articles: [], courses: [], lessons: [] };
+    function showMsg(id, text, ok) {
+      const el = document.getElementById(id);
+      el.textContent = text;
+      el.className = 'msg ' + (ok ? 'ok' : 'error');
+    }
 
+    let state = { articles: [], courses: [], lessons: [], scorecards: [] };
+
+    // ---- generic edit-mode helper: lock the key field, show cancel/banner,
+    // switch the save button's label so it's always clear which mode you're in.
+    function enterEditMode(prefix, saveLabel) {
+      document.getElementById(prefix + '_editing').classList.add('show');
+      document.getElementById(prefix + '_cancel').style.display = 'inline-block';
+      document.getElementById(prefix + '_save').textContent = saveLabel;
+    }
+    function exitEditMode(prefix, addLabel) {
+      document.getElementById(prefix + '_editing').classList.remove('show');
+      document.getElementById(prefix + '_cancel').style.display = 'none';
+      document.getElementById(prefix + '_save').textContent = addLabel;
+    }
+
+    // ================= Bài viết =================
     function renderArticles() {
       const tbody = document.querySelector('#articlesTable tbody');
       tbody.innerHTML = state.articles.map(a => \`
         <tr>
           <td>\${a.title}<div class="muted">\${a.slug}</div></td>
           <td><input type="checkbox" \${a.is_published ? 'checked' : ''} onchange="toggleArticle('\${a.slug}', this.checked)" /></td>
-          <td><button onclick="deleteArticle('\${a.slug}')">Xoá</button></td>
-        </tr>\`).join('');
+          <td class="actions"><button class="btn-small" onclick="editArticle('\${a.slug}')">Sửa</button><button class="btn-small danger" onclick="deleteArticle('\${a.slug}')">Xoá</button></td>
+        </tr>\`).join('') || '<tr><td class="muted" colspan="3">Chưa có bài viết nào</td></tr>';
     }
-
-    function renderCourses() {
-      const tbody = document.querySelector('#coursesTable tbody');
-      tbody.innerHTML = state.courses.map(c => \`
-        <tr>
-          <td>\${c.title}<div class="muted">\${c.slug}</div></td>
-          <td>\${c.is_free ? 'Có' : 'Không'}</td>
-          <td><input type="checkbox" \${c.is_published ? 'checked' : ''} onchange="toggleCourse('\${c.slug}', this.checked)" /></td>
-          <td><button onclick="deleteCourse('\${c.slug}')">Xoá</button></td>
-        </tr>\`).join('');
-
-      const select = document.getElementById('l_course');
-      select.innerHTML = state.courses.map(c => \`<option value="\${c.slug}">\${c.title}</option>\`).join('');
-    }
-
-    function renderLessons() {
-      const container = document.getElementById('lessonsByCourse');
-      container.innerHTML = state.courses.map(c => {
-        const lessons = state.lessons.filter(l => l.course_slug === c.slug);
-        return \`<div style="margin-top:10px"><strong>\${c.title}</strong>
-          <table><tbody>\${lessons.map(l => \`
-            <tr><td>\${l.sort_order}. \${l.title}</td><td><button onclick="deleteLesson('\${l.id}')">Xoá</button></td></tr>
-          \`).join('') || '<tr><td class="muted">Chưa có bài học</td></tr>'}</tbody></table>
-        </div>\`;
-      }).join('');
-    }
-
-    async function load() {
-      document.getElementById('loadMsg').textContent = 'Đang tải...';
-      try {
-        localStorage.setItem('content_admin_secret', secret());
-        state = await api('/data', {});
-        document.getElementById('app').style.display = 'block';
-        document.getElementById('loadMsg').textContent = '';
-        renderArticles(); renderCourses(); renderLessons();
-      } catch (err) {
-        document.getElementById('loadMsg').textContent = 'Lỗi: ' + err.message;
-      }
-    }
-    document.getElementById('loadBtn').addEventListener('click', load);
-
-    window.toggleArticle = async (slug, is_published) => {
-      await api('/articles/toggle', { slug, is_published }); load();
-    };
+    window.toggleArticle = async (slug, is_published) => { await api('/articles/toggle', { slug, is_published }); load(); };
     window.deleteArticle = async (slug) => {
-      if (!confirm('Xoá bài viết này?')) return;
+      if (!confirm('Xoá vĩnh viễn bài viết này? Không hoàn tác được.')) return;
       await api('/articles/delete', { slug }); load();
     };
-    window.toggleCourse = async (slug, is_published) => {
-      await api('/courses/toggle', { slug, is_published }); load();
+    window.editArticle = (slug) => {
+      const a = state.articles.find(x => x.slug === slug);
+      document.getElementById('a_slug').value = a.slug;
+      document.getElementById('a_slug').disabled = true;
+      document.getElementById('a_title').value = a.title || '';
+      document.getElementById('a_excerpt').value = a.excerpt || '';
+      document.getElementById('a_body').value = a.body || '';
+      document.getElementById('a_cover').value = a.cover_image_url || '';
+      document.getElementById('a_published').checked = a.is_published;
+      enterEditMode('a', 'Cập nhật bài viết');
+      document.getElementById('a_slug').scrollIntoView({ behavior: 'smooth', block: 'center' });
     };
-    window.deleteCourse = async (slug) => {
-      if (!confirm('Xoá khoá học này? Toàn bộ bài học bên trong cũng bị xoá.')) return;
-      await api('/courses/delete', { slug }); load();
-    };
-    window.deleteLesson = async (id) => {
-      if (!confirm('Xoá bài học này?')) return;
-      await api('/lessons/delete', { id }); load();
-    };
-
+    document.getElementById('a_cancel').addEventListener('click', () => {
+      document.getElementById('a_slug').disabled = false;
+      ['a_slug','a_title','a_excerpt','a_body','a_cover'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('a_published').checked = true;
+      exitEditMode('a', 'Thêm bài viết');
+    });
     document.getElementById('a_save').addEventListener('click', async () => {
-      const msg = document.getElementById('a_msg');
       try {
         await api('/articles', {
           slug: document.getElementById('a_slug').value.trim(),
@@ -285,12 +354,55 @@ router.get("/", (_req, res) => {
           cover_image_url: document.getElementById('a_cover').value.trim(),
           is_published: document.getElementById('a_published').checked,
         });
-        msg.textContent = 'Đã lưu!'; load();
-      } catch (err) { msg.textContent = 'Lỗi: ' + err.message; }
+        showMsg('a_msg', 'Đã lưu!', true);
+        document.getElementById('a_cancel').click();
+        load();
+      } catch (err) { showMsg('a_msg', 'Lỗi: ' + err.message, false); }
     });
 
+    // ================= Khoá học =================
+    function renderCourses() {
+      const tbody = document.querySelector('#coursesTable tbody');
+      tbody.innerHTML = state.courses.map(c => \`
+        <tr>
+          <td>\${c.title}<div class="muted">\${c.slug}</div></td>
+          <td>\${c.is_free ? 'Có' : 'Không'}</td>
+          <td><input type="checkbox" \${c.is_published ? 'checked' : ''} onchange="toggleCourse('\${c.slug}', this.checked)" /></td>
+          <td class="actions"><button class="btn-small" onclick="editCourse('\${c.slug}')">Sửa</button><button class="btn-small danger" onclick="deleteCourse('\${c.slug}')">Xoá</button></td>
+        </tr>\`).join('') || '<tr><td class="muted" colspan="4">Chưa có khoá học nào</td></tr>';
+
+      const select = document.getElementById('l_course');
+      const prevValue = select.value;
+      select.innerHTML = state.courses.map(c => \`<option value="\${c.slug}">\${c.title}</option>\`).join('');
+      if (prevValue) select.value = prevValue;
+    }
+    window.toggleCourse = async (slug, is_published) => { await api('/courses/toggle', { slug, is_published }); load(); };
+    window.deleteCourse = async (slug) => {
+      if (!confirm('Xoá vĩnh viễn khoá học này? Toàn bộ bài học bên trong cũng bị xoá theo, không hoàn tác được.')) return;
+      await api('/courses/delete', { slug }); load();
+    };
+    window.editCourse = (slug) => {
+      const c = state.courses.find(x => x.slug === slug);
+      document.getElementById('c_slug').value = c.slug;
+      document.getElementById('c_slug').disabled = true;
+      document.getElementById('c_title').value = c.title || '';
+      document.getElementById('c_desc').value = c.description || '';
+      document.getElementById('c_cover').value = c.cover_image_url || '';
+      document.getElementById('c_sort').value = c.sort_order ?? 1;
+      document.getElementById('c_free').checked = c.is_free;
+      document.getElementById('c_published').checked = c.is_published;
+      enterEditMode('c', 'Cập nhật khoá học');
+      document.getElementById('c_slug').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+    document.getElementById('c_cancel').addEventListener('click', () => {
+      document.getElementById('c_slug').disabled = false;
+      ['c_slug','c_title','c_desc','c_cover'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('c_sort').value = 1;
+      document.getElementById('c_free').checked = true;
+      document.getElementById('c_published').checked = true;
+      exitEditMode('c', 'Thêm khoá học');
+    });
     document.getElementById('c_save').addEventListener('click', async () => {
-      const msg = document.getElementById('c_msg');
       try {
         await api('/courses', {
           slug: document.getElementById('c_slug').value.trim(),
@@ -301,24 +413,126 @@ router.get("/", (_req, res) => {
           is_free: document.getElementById('c_free').checked,
           is_published: document.getElementById('c_published').checked,
         });
-        msg.textContent = 'Đã lưu!'; load();
-      } catch (err) { msg.textContent = 'Lỗi: ' + err.message; }
+        showMsg('c_msg', 'Đã lưu!', true);
+        document.getElementById('c_cancel').click();
+        load();
+      } catch (err) { showMsg('c_msg', 'Lỗi: ' + err.message, false); }
     });
 
+    // ================= Bài học =================
+    function renderLessons() {
+      const container = document.getElementById('lessonsByCourse');
+      container.innerHTML = state.courses.map(c => {
+        const lessons = state.lessons.filter(l => l.course_slug === c.slug);
+        return \`<div style="margin-top:10px"><strong>\${c.title}</strong>
+          <table><tbody>\${lessons.map(l => \`
+            <tr>
+              <td>\${l.sort_order}. \${l.title}\${l.video_url ? ' 🎬' : ''}</td>
+              <td class="actions"><button class="btn-small" onclick="editLesson('\${l.id}')">Sửa</button><button class="btn-small danger" onclick="deleteLesson('\${l.id}')">Xoá</button></td>
+            </tr>
+          \`).join('') || '<tr><td class="muted">Chưa có bài học</td></tr>'}</tbody></table>
+        </div>\`;
+      }).join('');
+    }
+    window.deleteLesson = async (id) => {
+      if (!confirm('Xoá vĩnh viễn bài học này? Không hoàn tác được.')) return;
+      await api('/lessons/delete', { id }); load();
+    };
+    window.editLesson = (id) => {
+      const l = state.lessons.find(x => x.id === id);
+      document.getElementById('l_course').value = l.course_slug;
+      document.getElementById('l_course').disabled = true;
+      document.getElementById('l_title').value = l.title || '';
+      document.getElementById('l_video').value = l.video_url || '';
+      document.getElementById('l_body').value = l.body || '';
+      document.getElementById('l_sort').value = l.sort_order ?? 1;
+      enterEditMode('l', 'Cập nhật bài học');
+      document.getElementById('l_save').dataset.editingId = id;
+      document.getElementById('l_title').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+    document.getElementById('l_cancel').addEventListener('click', () => {
+      document.getElementById('l_course').disabled = false;
+      ['l_title','l_video','l_body'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('l_sort').value = 1;
+      delete document.getElementById('l_save').dataset.editingId;
+      exitEditMode('l', 'Thêm bài học');
+    });
     document.getElementById('l_save').addEventListener('click', async () => {
-      const msg = document.getElementById('l_msg');
+      const editingId = document.getElementById('l_save').dataset.editingId;
+      const payload = {
+        title: document.getElementById('l_title').value.trim(),
+        video_url: document.getElementById('l_video').value.trim(),
+        body: document.getElementById('l_body').value,
+        sort_order: document.getElementById('l_sort').value,
+      };
       try {
-        await api('/lessons', {
-          course_slug: document.getElementById('l_course').value,
-          title: document.getElementById('l_title').value.trim(),
-          video_url: document.getElementById('l_video').value.trim(),
-          body: document.getElementById('l_body').value,
-          sort_order: document.getElementById('l_sort').value,
-        });
-        msg.textContent = 'Đã thêm!'; load();
-      } catch (err) { msg.textContent = 'Lỗi: ' + err.message; }
+        if (editingId) {
+          await api('/lessons/update', { id: editingId, ...payload });
+        } else {
+          await api('/lessons', { course_slug: document.getElementById('l_course').value, ...payload });
+        }
+        showMsg('l_msg', 'Đã lưu!', true);
+        document.getElementById('l_cancel').click();
+        load();
+      } catch (err) { showMsg('l_msg', 'Lỗi: ' + err.message, false); }
     });
 
+    // ================= Đánh giá (Assessment) =================
+    function renderScorecards() {
+      const tbody = document.querySelector('#scorecardsTable tbody');
+      tbody.innerHTML = state.scorecards.map(s => \`
+        <tr>
+          <td>\${s.title}<div class="muted">\${s.slug}</div></td>
+          <td><input type="checkbox" \${s.is_active ? 'checked' : ''} onchange="toggleScorecard('\${s.slug}', this.checked)" /></td>
+          <td class="actions"><button class="btn-small" onclick="editScorecard('\${s.slug}')">Sửa</button></td>
+        </tr>\`).join('') || '<tr><td class="muted" colspan="3">Chưa có bộ đánh giá nào</td></tr>';
+    }
+    window.toggleScorecard = async (slug, is_active) => { await api('/scorecards/toggle', { slug, is_active }); load(); };
+    window.editScorecard = (slug) => {
+      const s = state.scorecards.find(x => x.slug === slug);
+      document.getElementById('s_slug').value = s.slug;
+      document.getElementById('s_slug').disabled = true;
+      document.getElementById('s_title').value = s.title || '';
+      document.getElementById('s_desc').value = s.description || '';
+      document.getElementById('s_active').checked = s.is_active;
+      document.getElementById('s_config').value = JSON.stringify(s.config, null, 2);
+      enterEditMode('s', 'Cập nhật bộ đánh giá');
+      document.getElementById('s_slug').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+    document.getElementById('s_cancel').addEventListener('click', () => {
+      document.getElementById('s_slug').disabled = false;
+      ['s_slug','s_title','s_desc','s_config'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('s_active').checked = true;
+      exitEditMode('s', 'Thêm bộ đánh giá');
+    });
+    document.getElementById('s_save').addEventListener('click', async () => {
+      try {
+        await api('/scorecards', {
+          slug: document.getElementById('s_slug').value.trim(),
+          title: document.getElementById('s_title').value.trim(),
+          description: document.getElementById('s_desc').value.trim(),
+          is_active: document.getElementById('s_active').checked,
+          config: document.getElementById('s_config').value,
+        });
+        showMsg('s_msg', 'Đã lưu!', true);
+        document.getElementById('s_cancel').click();
+        load();
+      } catch (err) { showMsg('s_msg', 'Lỗi: ' + err.message, false); }
+    });
+
+    async function load() {
+      document.getElementById('loadMsg').textContent = 'Đang tải...';
+      try {
+        localStorage.setItem('content_admin_secret', secret());
+        state = await api('/data', {});
+        document.getElementById('app').style.display = 'block';
+        document.getElementById('loadMsg').textContent = '';
+        renderArticles(); renderCourses(); renderLessons(); renderScorecards();
+      } catch (err) {
+        document.getElementById('loadMsg').textContent = 'Lỗi: ' + err.message;
+      }
+    }
+    document.getElementById('loadBtn').addEventListener('click', load);
     if (secret()) load();
   </script>
 </body>
