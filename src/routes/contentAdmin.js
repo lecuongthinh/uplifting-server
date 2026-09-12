@@ -96,11 +96,11 @@ router.post("/courses/delete", async (req, res) => {
 
 router.post("/lessons", async (req, res) => {
   if (!checkSecret(req, res)) return;
-  const { course_slug, title, video_url, body, sort_order } = req.body;
+  const { course_slug, title, video_url, body, sort_order, is_locked } = req.body;
   if (!course_slug || !title) return res.status(400).json({ message: "Thiếu khoá học hoặc tiêu đề bài học" });
   const { error } = await supabase
     .from("lessons")
-    .insert({ course_slug, title, video_url: video_url || null, body, sort_order: Number(sort_order) || 0 });
+    .insert({ course_slug, title, video_url: video_url || null, body, sort_order: Number(sort_order) || 0, is_locked: !!is_locked });
   if (error) return res.status(500).json({ message: error.message });
   res.json({ saved: true });
 });
@@ -109,11 +109,11 @@ router.post("/lessons", async (req, res) => {
 // to upsert on — editing an existing one updates by its uuid instead.
 router.post("/lessons/update", async (req, res) => {
   if (!checkSecret(req, res)) return;
-  const { id, title, video_url, body, sort_order } = req.body;
+  const { id, title, video_url, body, sort_order, is_locked } = req.body;
   if (!id || !title) return res.status(400).json({ message: "Thiếu id hoặc tiêu đề bài học" });
   const { error } = await supabase
     .from("lessons")
-    .update({ title, video_url: video_url || null, body, sort_order: Number(sort_order) || 0 })
+    .update({ title, video_url: video_url || null, body, sort_order: Number(sort_order) || 0, is_locked: !!is_locked })
     .eq("id", id);
   if (error) return res.status(500).json({ message: error.message });
   res.json({ saved: true });
@@ -249,6 +249,7 @@ router.get("/", (_req, res) => {
       <label>Link video (tuỳ chọn — dán link YouTube bình thường cũng được) <input id="l_video" placeholder="https://..." /></label>
       <label>Nội dung / ghi chú <textarea id="l_body"></textarea></label>
       <label>Thứ tự trong khoá <input id="l_sort" type="number" value="1" /></label>
+      <div class="checkbox-row"><input type="checkbox" id="l_locked" /><label style="margin:0">Khoá bài học này — chỉ hiện tên, cần đăng ký mới xem được nội dung</label></div>
       <button class="btn-primary" id="l_save">Thêm bài học</button>
       <button class="btn-secondary" id="l_cancel" style="display:none">Huỷ sửa</button>
       <div id="l_msg" class="msg"></div>
@@ -427,7 +428,7 @@ router.get("/", (_req, res) => {
         return \`<div style="margin-top:10px"><strong>\${c.title}</strong>
           <table><tbody>\${lessons.map(l => \`
             <tr>
-              <td>\${l.sort_order}. \${l.title}\${l.video_url ? ' 🎬' : ''}</td>
+              <td>\${l.sort_order}. \${l.title}\${l.video_url ? ' 🎬' : ''}\${l.is_locked ? ' 🔒' : ''}</td>
               <td class="actions"><button class="btn-small" onclick="editLesson('\${l.id}')">Sửa</button><button class="btn-small danger" onclick="deleteLesson('\${l.id}')">Xoá</button></td>
             </tr>
           \`).join('') || '<tr><td class="muted">Chưa có bài học</td></tr>'}</tbody></table>
@@ -446,6 +447,7 @@ router.get("/", (_req, res) => {
       document.getElementById('l_video').value = l.video_url || '';
       document.getElementById('l_body').value = l.body || '';
       document.getElementById('l_sort').value = l.sort_order ?? 1;
+      document.getElementById('l_locked').checked = !!l.is_locked;
       enterEditMode('l', 'Cập nhật bài học');
       document.getElementById('l_save').dataset.editingId = id;
       document.getElementById('l_title').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -454,6 +456,7 @@ router.get("/", (_req, res) => {
       document.getElementById('l_course').disabled = false;
       ['l_title','l_video','l_body'].forEach(id => document.getElementById(id).value = '');
       document.getElementById('l_sort').value = 1;
+      document.getElementById('l_locked').checked = false;
       delete document.getElementById('l_save').dataset.editingId;
       exitEditMode('l', 'Thêm bài học');
     });
@@ -464,6 +467,7 @@ router.get("/", (_req, res) => {
         video_url: document.getElementById('l_video').value.trim(),
         body: document.getElementById('l_body').value,
         sort_order: document.getElementById('l_sort').value,
+        is_locked: document.getElementById('l_locked').checked,
       };
       try {
         if (editingId) {

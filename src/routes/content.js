@@ -7,8 +7,7 @@ const router = Router();
 // Courses, lessons, and articles are all pure data (see the "no redeploy to
 // update content" decision in project_uplifting_coaching_miniapp memory) —
 // this route layer never changes when a course or article is added/edited
-// through the content-admin page (not built yet; for now, rows are entered
-// directly via Supabase's table editor).
+// through the content-admin page (/admin/content, see contentAdmin.js).
 
 router.get("/courses", async (_req, res) => {
   const { data, error } = await supabase
@@ -31,12 +30,20 @@ router.get("/courses/:slug", async (req, res) => {
 
   const { data: lessons, error: lessonsError } = await supabase
     .from("lessons")
-    .select("id, title, video_url, body, sort_order")
+    .select("id, title, video_url, body, sort_order, is_locked")
     .eq("course_slug", req.params.slug)
     .order("sort_order");
   if (lessonsError) return res.status(500).json({ message: lessonsError.message });
 
-  res.json({ course, lessons });
+  // Locked lessons show up in the curriculum (title, order) so the outline
+  // reads like a real course, but video/body are stripped server-side, not
+  // just hidden by the client — there's no purchase/entitlement system yet
+  // (see project_uplifting_coaching_miniapp memory), so nothing can
+  // currently "unlock" a lesson; hiding it here is the only real gate that
+  // exists today, not just a UI nicety.
+  const safeLessons = lessons.map((l) => (l.is_locked ? { ...l, video_url: null, body: null } : l));
+
+  res.json({ course, lessons: safeLessons });
 });
 
 // Requires login — progress is per-contact. Lightweight (just lesson ids),
