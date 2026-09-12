@@ -1,0 +1,44 @@
+import "dotenv/config";
+import express from "express";
+import cors from "cors";
+import authRoutes from "./routes/auth.js";
+import scorecardRoutes from "./routes/scorecards.js";
+import contentRoutes from "./routes/content.js";
+
+const app = express();
+
+// Personalized/session-scoped JSON must never be cached via ETag/304 — see
+// reference_stack_playbook_zalo_ghl_render_supabase memory section 5. Learned
+// the hard way on 123gym-server; set this from day one here instead.
+app.set("etag", false);
+app.use(cors());
+app.use(express.json());
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api/")) return next();
+  const startedAt = Date.now();
+  res.on("finish", () => {
+    console.log(`[access] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - startedAt}ms)`);
+  });
+  next();
+});
+
+app.use("/api/auth", authRoutes);
+app.use("/api/scorecards", scorecardRoutes);
+app.use("/api/content", contentRoutes);
+
+app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// Zalo domain-ownership verification file — the exact filename/code is
+// issued per Mini App under developers.zalo.me -> Cấu hình -> Xác minh
+// miền. Placeholder until that code is generated for App Uplifting.
+app.get("/zalo_verifier_PLACEHOLDER.html", (_req, res) => {
+  res
+    .type("html")
+    .send(
+      `<!DOCTYPE html>\n<html><head><meta property="zalo-platform-site-verification" content="REPLACE_ME" /></head><body>Uplifting Business Coaching</body></html>`
+    );
+});
+
+const port = process.env.PORT || 8787;
+app.listen(port, () => console.log(`uplifting-server listening on :${port}`));
