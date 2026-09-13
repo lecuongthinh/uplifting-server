@@ -161,14 +161,19 @@ router.get("/articles/:slug", async (req, res) => {
 // Downloadable lead-magnet resources (PDFs, templates...) — the client
 // opens `file_url` directly (via zmp-sdk's openWebview), no detail page
 // needed since there's nothing to render beyond the file itself.
-router.get("/resources", async (_req, res) => {
+// optionalSession, matching /courses/:slug's model: anonymous callers see
+// the teaser (title/description/icon) so resources still work as a Home
+// draw, but not the actual file — a locked lesson pattern, not a paid one
+// (see project_uplifting_coaching_miniapp memory: registered = full access).
+router.get("/resources", optionalSession, async (req, res) => {
   const { data, error } = await supabase
     .from("resources")
     .select("slug, title, description, file_url, icon_type, cover_image_url")
     .eq("is_published", true)
     .order("sort_order");
   if (error) return res.status(500).json({ message: error.message });
-  res.json({ resources: data });
+  const resources = req.session ? data : data.map((r) => ({ ...r, file_url: null }));
+  res.json({ resources });
 });
 
 export default router;

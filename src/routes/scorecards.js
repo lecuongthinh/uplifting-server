@@ -7,12 +7,14 @@ import { addContactTag, updateContactCustomFields } from "../lib/leadconnector.j
 
 const router = Router();
 
-// Result is free value, shown immediately on submit — no login wall on the
-// compute itself (see project_uplifting_coaching_miniapp memory: the phone
-// permission is earned by offering to SAVE the result / get follow-up, per
-// Zalo review rule 6.1, not by gating the result behind it). The short-TTL
-// cache below just bridges "computed the result" to "logged in a moment
-// later to save it", the same pattern as zmp's own phone-token flow.
+// The result itself is now the lead-capture hook: submit computes and
+// caches it, but does NOT return it to an anonymous caller — only /claim
+// (after Zalo login) reveals it. This is a deliberate business decision
+// (see project_uplifting_coaching_miniapp memory), not a Zalo policy
+// requirement — review rule 6.1 only forbids auto-requesting the phone
+// permission without an explicit user action; gating content behind an
+// explicit "xem kết quả" tap is still compliant. The short-TTL cache below
+// bridges "computed the result" to "logged in a moment later to reveal it".
 const pendingSubmissions = new Map();
 const SUBMISSION_TTL_MS = 30 * 60 * 1000;
 
@@ -63,7 +65,7 @@ router.post("/:slug/submit", async (req, res) => {
 
     const result = computeScorecardResult(data.config, answers);
     const submissionId = cacheSubmission(req.params.slug, result, answers);
-    res.json({ submissionId, result });
+    res.json({ submissionId });
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
@@ -106,7 +108,7 @@ router.post("/:slug/claim", requireSession, async (req, res) => {
     );
   }
 
-  res.json({ saved: true });
+  res.json({ saved: true, result });
 });
 
 export default router;
