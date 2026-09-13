@@ -6,6 +6,7 @@ import scorecardRoutes from "./routes/scorecards.js";
 import contentRoutes from "./routes/content.js";
 import memberRoutes from "./routes/member.js";
 import contentAdminRoutes from "./routes/contentAdmin.js";
+import zaloConsentRoutes from "./routes/zaloConsent.js";
 
 const app = express();
 
@@ -30,6 +31,7 @@ app.use("/api/scorecards", scorecardRoutes);
 app.use("/api/content", contentRoutes);
 app.use("/api/member", memberRoutes);
 app.use("/admin/content", contentAdminRoutes);
+app.use("/webhooks/zalo-consent", zaloConsentRoutes);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
