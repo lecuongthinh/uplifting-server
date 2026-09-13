@@ -8,9 +8,9 @@ create table if not exists uplifting_app.app_settings (
 );
 
 insert into uplifting_app.app_settings (key, value) values
-  ('lock_banner_title', 'Còn nội dung nâng cao phía sau 🔒'),
-  ('lock_banner_desc', 'Để lại thông tin qua bài đánh giá miễn phí — Uplifting sẽ liên hệ hướng dẫn anh/chị đăng ký để mở khoá toàn bộ nội dung.'),
-  ('lock_modal_title', 'Nội dung nâng cao 🔒'),
-  ('lock_modal_desc', 'Bài học này nằm trong phần nâng cao, cần đăng ký mới xem được. Làm bài đánh giá miễn phí để Uplifting tư vấn và hướng dẫn anh/chị mở khoá.'),
-  ('lock_cta_label', 'Làm bài đánh giá miễn phí')
+  ('lock_banner_title', 'Xem toàn bộ nội dung miễn phí 🔓'),
+  ('lock_banner_desc', 'Chia sẻ số điện thoại để mở khoá toàn bộ bài học — hoàn toàn miễn phí, Uplifting sẽ đồng hành cùng bạn qua Zalo.'),
+  ('lock_modal_title', 'Mở khoá toàn bộ nội dung'),
+  ('lock_modal_desc', 'Bài học này dành cho người đã đăng ký. Chia sẻ số điện thoại để xem miễn phí toàn bộ khoá học này và các khoá học khác.'),
+  ('lock_cta_label', 'Đăng ký xem miễn phí')
 on conflict (key) do nothing;

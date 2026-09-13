@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { supabase } from "../lib/supabase.js";
-import { requireSession } from "../middleware/session.js";
+import { requireSession, optionalSession } from "../middleware/session.js";
 
 const router = Router();
 
@@ -13,13 +13,13 @@ const router = Router();
 // page without a Mini App rebuild — see sql/004_app_settings.sql. Defaults
 // here mean a fresh row-less deploy still renders sensible text.
 const SETTINGS_DEFAULTS = {
-  lock_banner_title: "Còn nội dung nâng cao phía sau 🔒",
+  lock_banner_title: "Xem toàn bộ nội dung miễn phí 🔓",
   lock_banner_desc:
-    "Để lại thông tin qua bài đánh giá miễn phí — Uplifting sẽ liên hệ hướng dẫn anh/chị đăng ký để mở khoá toàn bộ nội dung.",
-  lock_modal_title: "Nội dung nâng cao 🔒",
+    "Chia sẻ số điện thoại để mở khoá toàn bộ bài học — hoàn toàn miễn phí, Uplifting sẽ đồng hành cùng bạn qua Zalo.",
+  lock_modal_title: "Mở khoá toàn bộ nội dung",
   lock_modal_desc:
-    "Bài học này nằm trong phần nâng cao, cần đăng ký mới xem được. Làm bài đánh giá miễn phí để Uplifting tư vấn và hướng dẫn anh/chị mở khoá.",
-  lock_cta_label: "Làm bài đánh giá miễn phí",
+    "Bài học này dành cho người đã đăng ký. Chia sẻ số điện thoại để xem miễn phí toàn bộ khoá học này và các khoá học khác.",
+  lock_cta_label: "Đăng ký xem miễn phí",
 };
 
 router.get("/settings", async (_req, res) => {
@@ -40,7 +40,13 @@ router.get("/courses", async (_req, res) => {
   res.json({ courses: data });
 });
 
-router.get("/courses/:slug", async (req, res) => {
+// optionalSession, not requireSession: this app is a marketing/lead-gen
+// tool, not a paid content platform (see project_uplifting_coaching_miniapp
+// memory) — a locked lesson isn't gated behind a purchase, it's gated
+// behind sharing a phone number. Anyone with a valid session (i.e. has
+// logged in via Zalo at least once) gets every lesson unlocked, regardless
+// of is_locked; anonymous callers still get the teaser (title only).
+router.get("/courses/:slug", optionalSession, async (req, res) => {
   const { data: course, error } = await supabase
     .from("courses")
     .select("slug, title, description, cover_image_url, is_free")
@@ -57,12 +63,14 @@ router.get("/courses/:slug", async (req, res) => {
   if (lessonsError) return res.status(500).json({ message: lessonsError.message });
 
   // Locked lessons show up in the curriculum (title, order) so the outline
-  // reads like a real course, but video/body are stripped server-side, not
-  // just hidden by the client — there's no purchase/entitlement system yet
-  // (see project_uplifting_coaching_miniapp memory), so nothing can
-  // currently "unlock" a lesson; hiding it here is the only real gate that
-  // exists today, not just a UI nicety.
-  const safeLessons = lessons.map((l) => (l.is_locked ? { ...l, video_url: null, body: null } : l));
+  // reads like a real course, but video/body are stripped server-side for
+  // anonymous callers, not just hidden by the client. `is_locked` in the
+  // response reflects whether THIS caller actually has it locked, so the
+  // client can keep using it as-is for the lock icon/tap behavior.
+  const unlockAll = !!req.session;
+  const safeLessons = lessons.map((l) =>
+    l.is_locked && !unlockAll ? { ...l, is_locked: true, video_url: null, body: null } : { ...l, is_locked: false }
+  );
 
   res.json({ course, lessons: safeLessons });
 });

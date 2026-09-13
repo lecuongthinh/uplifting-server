@@ -248,6 +248,10 @@ router.get("/", (_req, res) => {
   .editing-banner { display: none; background: #fdf3e4; border: 1px solid #f0d9ae; border-radius: 6px; padding: 8px 12px; font-size: 13px; margin-top: 12px; }
   .editing-banner.show { display: block; }
   .actions { display: flex; gap: 6px; }
+  .tab-nav { display: flex; gap: 6px; margin-top: 24px; border-bottom: 1px solid #eee; overflow-x: auto; }
+  .tab-btn { background: none; border: none; padding: 10px 14px; font-size: 14px; font-weight: 600; color: #888; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
+  .tab-btn.active { color: #c07a1e; border-bottom-color: #c07a1e; }
+  .tab-panel h2:first-child { margin-top: 20px; }
 </style>
 </head>
 <body>
@@ -260,6 +264,14 @@ router.get("/", (_req, res) => {
 
   <div id="app" style="display:none">
 
+    <div class="tab-nav">
+      <button class="tab-btn" data-tab="articles">Bài viết</button>
+      <button class="tab-btn" data-tab="courses">Khoá học</button>
+      <button class="tab-btn" data-tab="scorecards">Đánh giá</button>
+      <button class="tab-btn" data-tab="settings">Cài đặt hiển thị</button>
+    </div>
+
+    <div class="tab-panel" id="tab-articles" hidden>
     <h2>Bài viết</h2>
     <table id="articlesTable"><thead><tr><th>Tiêu đề</th><th>Hiện</th><th></th></tr></thead><tbody></tbody></table>
     <fieldset>
@@ -275,7 +287,9 @@ router.get("/", (_req, res) => {
       <button class="btn-secondary" id="a_cancel" style="display:none">Huỷ sửa</button>
       <div id="a_msg" class="msg"></div>
     </fieldset>
+    </div>
 
+    <div class="tab-panel" id="tab-courses" hidden>
     <h2>Khoá học</h2>
     <table id="coursesTable"><thead><tr><th>Tiêu đề</th><th>Miễn phí</th><th>Hiện</th><th></th></tr></thead><tbody></tbody></table>
     <fieldset>
@@ -303,12 +317,14 @@ router.get("/", (_req, res) => {
       <label>Link video (tuỳ chọn — dán link YouTube bình thường cũng được) <input id="l_video" placeholder="https://..." /></label>
       <label>Nội dung / ghi chú <textarea id="l_body"></textarea></label>
       <label>Thứ tự trong khoá <input id="l_sort" type="number" value="1" /></label>
-      <div class="checkbox-row"><input type="checkbox" id="l_locked" /><label style="margin:0">Khoá bài học này — chỉ hiện tên, cần đăng ký mới xem được nội dung</label></div>
+      <div class="checkbox-row"><input type="checkbox" id="l_locked" /><label style="margin:0">Khoá bài học này — chỉ hiện tên, cần chia sẻ số điện thoại (đăng ký) mới xem được nội dung</label></div>
       <button class="btn-primary" id="l_save">Thêm bài học</button>
       <button class="btn-secondary" id="l_cancel" style="display:none">Huỷ sửa</button>
       <div id="l_msg" class="msg"></div>
     </fieldset>
+    </div>
 
+    <div class="tab-panel" id="tab-scorecards" hidden>
     <h2>Đánh giá (Assessment)</h2>
     <p class="muted">Không có nút xoá cố ý — kết quả khách đã làm gắn với bộ này, xoá sẽ mất lịch sử của họ. Muốn ẩn thì bỏ "Đang dùng".</p>
     <table id="scorecardsTable"><thead><tr><th>Tiêu đề</th><th>Đang dùng</th><th></th></tr></thead><tbody></tbody></table>
@@ -327,7 +343,9 @@ router.get("/", (_req, res) => {
       <button class="btn-secondary" id="s_cancel" style="display:none">Huỷ sửa</button>
       <div id="s_msg" class="msg"></div>
     </fieldset>
+    </div>
 
+    <div class="tab-panel" id="tab-settings" hidden>
     <h2>Cài đặt hiển thị</h2>
     <p class="muted">Đổi chữ ở đây sẽ hiện ngay trên app, không cần đăng bản cập nhật mới.</p>
     <fieldset>
@@ -343,9 +361,21 @@ router.get("/", (_req, res) => {
     <label>Chữ trên nút kêu gọi hành động (dùng chung cho cả hai) <input id="set_lock_cta_label" /></label>
     <button class="btn-primary" id="set_save">Lưu cài đặt hiển thị</button>
     <div id="set_msg" class="msg"></div>
+    </div>
   </div>
 
   <script>
+    const TABS = ['articles', 'courses', 'scorecards', 'settings'];
+    function selectTab(tab) {
+      for (const t of TABS) {
+        document.getElementById('tab-' + t).hidden = t !== tab;
+        document.querySelector('.tab-btn[data-tab="' + t + '"]').classList.toggle('active', t === tab);
+      }
+      localStorage.setItem('content_admin_tab', tab);
+    }
+    document.querySelectorAll('.tab-btn').forEach((btn) => btn.addEventListener('click', () => selectTab(btn.dataset.tab)));
+    selectTab(TABS.includes(localStorage.getItem('content_admin_tab')) ? localStorage.getItem('content_admin_tab') : 'articles');
+
     const secretInput = document.getElementById('secret');
     secretInput.value = localStorage.getItem('content_admin_secret') || '';
     function secret() { return secretInput.value; }
