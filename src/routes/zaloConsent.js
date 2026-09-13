@@ -33,6 +33,12 @@ function isValidSignature(payload, signature) {
 // zalo_uid, see auth.js) — so there's nothing to look up and clear yet.
 // Same known gap as 123gym-server's version of this file; wire up real
 // deletion once login also captures this mini-app-scoped id somewhere.
+// Harmless reachability check — in case Zalo's own "Thiết lập" button in
+// the verification console probes the URL with a plain GET before allowing
+// it to be saved. The real event delivery is always POST+signed; this just
+// makes sure a GET can't fail that setup step for the wrong reason.
+router.get("/", (_req, res) => res.json({ ok: true }));
+
 router.post("/", (req, res) => {
   const signature = req.headers["x-zevent-signature"];
   if (!isValidSignature(req.body, signature)) {

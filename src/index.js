@@ -7,6 +7,7 @@ import contentRoutes from "./routes/content.js";
 import memberRoutes from "./routes/member.js";
 import contentAdminRoutes from "./routes/contentAdmin.js";
 import zaloConsentRoutes from "./routes/zaloConsent.js";
+import termsRoutes from "./routes/terms.js";
 
 const app = express();
 
@@ -32,6 +33,7 @@ app.use("/api/content", contentRoutes);
 app.use("/api/member", memberRoutes);
 app.use("/admin/content", contentAdminRoutes);
 app.use("/webhooks/zalo-consent", zaloConsentRoutes);
+app.use("/dieu-khoan-su-dung", termsRoutes);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
