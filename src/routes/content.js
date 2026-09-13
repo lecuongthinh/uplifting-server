@@ -18,7 +18,7 @@ const SETTINGS_DEFAULTS = {
     "Chia sẻ số điện thoại để mở khoá toàn bộ bài học — hoàn toàn miễn phí, Uplifting sẽ đồng hành cùng bạn qua Zalo.",
   lock_modal_title: "Mở khoá toàn bộ nội dung",
   lock_modal_desc:
-    "Bài học này dành cho người đã đăng ký. Chia sẻ số điện thoại để xem miễn phí toàn bộ khoá học này và các khoá học khác.",
+    "Nội dung này dành cho người đã đăng ký. Chia sẻ số điện thoại để xem miễn phí toàn bộ khoá học và tài nguyên.",
   lock_cta_label: "Đăng ký xem miễn phí",
   home_banner_title: "Bạn đang cân bằng ở đâu?",
   home_banner_desc: "Làm bài đánh giá miễn phí — chỉ 3 phút.",
