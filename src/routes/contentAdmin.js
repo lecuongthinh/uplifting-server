@@ -78,14 +78,21 @@ router.post("/articles/toggle", async (req, res) => {
 
 router.post("/resources", async (req, res) => {
   if (!checkSecret(req, res)) return;
-  const { slug, title, description, file_url, is_published, sort_order } = req.body;
+  const { slug, title, description, file_url, icon_type, cover_image_url, is_published, sort_order } = req.body;
   if (!slug || !title || !file_url) return res.status(400).json({ message: "Thiếu slug, tiêu đề hoặc link file" });
-  const { error } = await supabase
-    .from("resources")
-    .upsert(
-      { slug, title, description, file_url, is_published: !!is_published, sort_order: Number(sort_order) || 0 },
-      { onConflict: "slug" }
-    );
+  const { error } = await supabase.from("resources").upsert(
+    {
+      slug,
+      title,
+      description,
+      file_url,
+      icon_type: icon_type || "pdf",
+      cover_image_url: cover_image_url || null,
+      is_published: !!is_published,
+      sort_order: Number(sort_order) || 0,
+    },
+    { onConflict: "slug" }
+  );
   if (error) return res.status(500).json({ message: error.message });
   res.json({ saved: true });
 });
@@ -342,6 +349,16 @@ router.get("/", (_req, res) => {
       <label>Tiêu đề <input id="r_title" /></label>
       <label>Mô tả ngắn <textarea id="r_desc"></textarea></label>
       <label>Link file (PDF, Google Drive, v.v. — link phải xem/tải được công khai) <input id="r_file" placeholder="https://..." /></label>
+      <label>Loại tài nguyên (chọn icon phù hợp — chỉ hiện khi không có ảnh đại diện)
+        <select id="r_icon">
+          <option value="pdf">Tài liệu / PDF</option>
+          <option value="video">Video</option>
+          <option value="ebook">Ebook / Sách</option>
+          <option value="checklist">Checklist</option>
+          <option value="link">Link ngoài</option>
+        </select>
+      </label>
+      <label>Link ảnh đại diện (tuỳ chọn — có thì ưu tiên hiện ảnh này thay vì icon) <input id="r_cover" placeholder="https://..." /></label>
       <label>Thứ tự hiển thị (số nhỏ hiện trước) <input id="r_sort" type="number" value="1" /></label>
       <div class="checkbox-row"><input type="checkbox" id="r_published" checked /><label style="margin:0">Hiển thị ngay</label></div>
       <button class="btn-primary" id="r_save">Thêm tài nguyên</button>
@@ -575,6 +592,8 @@ router.get("/", (_req, res) => {
       document.getElementById('r_title').value = r.title || '';
       document.getElementById('r_desc').value = r.description || '';
       document.getElementById('r_file').value = r.file_url || '';
+      document.getElementById('r_icon').value = r.icon_type || 'pdf';
+      document.getElementById('r_cover').value = r.cover_image_url || '';
       document.getElementById('r_sort').value = r.sort_order ?? 1;
       document.getElementById('r_published').checked = r.is_published;
       enterEditMode('r', 'Cập nhật tài nguyên');
@@ -582,7 +601,8 @@ router.get("/", (_req, res) => {
     };
     document.getElementById('r_cancel').addEventListener('click', () => {
       document.getElementById('r_slug').disabled = false;
-      ['r_slug','r_title','r_desc','r_file'].forEach(id => document.getElementById(id).value = '');
+      ['r_slug','r_title','r_desc','r_file','r_cover'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('r_icon').value = 'pdf';
       document.getElementById('r_sort').value = 1;
       document.getElementById('r_published').checked = true;
       exitEditMode('r', 'Thêm tài nguyên');
@@ -594,6 +614,8 @@ router.get("/", (_req, res) => {
           title: document.getElementById('r_title').value.trim(),
           description: document.getElementById('r_desc').value.trim(),
           file_url: document.getElementById('r_file').value.trim(),
+          icon_type: document.getElementById('r_icon').value,
+          cover_image_url: document.getElementById('r_cover').value.trim(),
           sort_order: document.getElementById('r_sort').value,
           is_published: document.getElementById('r_published').checked,
         });

@@ -164,7 +164,7 @@ router.get("/articles/:slug", async (req, res) => {
 router.get("/resources", async (_req, res) => {
   const { data, error } = await supabase
     .from("resources")
-    .select("slug, title, description, file_url")
+    .select("slug, title, description, file_url, icon_type, cover_image_url")
     .eq("is_published", true)
     .order("sort_order");
   if (error) return res.status(500).json({ message: error.message });
