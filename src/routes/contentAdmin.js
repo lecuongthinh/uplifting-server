@@ -18,17 +18,30 @@ router.post("/data", async (req, res) => {
     { data: courses, error: e2 },
     { data: lessons, error: e3 },
     { data: scorecards, error: e4 },
-    { data: settings, error: e5 },
+    settingsResult,
+    resourcesResult,
   ] = await Promise.all([
     supabase.from("articles").select("*").order("published_at", { ascending: false }),
     supabase.from("courses").select("*").order("sort_order"),
     supabase.from("lessons").select("*").order("sort_order"),
     supabase.from("scorecard_configs").select("*").order("created_at"),
     supabase.from("app_settings").select("*").order("key"),
+    supabase.from("resources").select("*").order("sort_order"),
   ]);
-  const error = e1 || e2 || e3 || e4 || e5;
+  // Core content tables have existed since day one — a real error there is
+  // worth failing loudly on. `app_settings`/`resources` are newer, migration
+  // gated tables (sql/004, sql/005) — degrade to an empty list instead of
+  // blocking every other tab if the user hasn't run that migration yet.
+  const error = e1 || e2 || e3 || e4;
   if (error) return res.status(500).json({ message: error.message });
-  res.json({ articles, courses, lessons, scorecards, settings });
+  res.json({
+    articles,
+    courses,
+    lessons,
+    scorecards,
+    settings: settingsResult.data || [],
+    resources: resourcesResult.data || [],
+  });
 });
 
 router.post("/settings", async (req, res) => {
@@ -59,6 +72,34 @@ router.post("/articles", async (req, res) => {
 router.post("/articles/toggle", async (req, res) => {
   if (!checkSecret(req, res)) return;
   const { error } = await supabase.from("articles").update({ is_published: req.body.is_published }).eq("slug", req.body.slug);
+  if (error) return res.status(500).json({ message: error.message });
+  res.json({ ok: true });
+});
+
+router.post("/resources", async (req, res) => {
+  if (!checkSecret(req, res)) return;
+  const { slug, title, description, file_url, is_published, sort_order } = req.body;
+  if (!slug || !title || !file_url) return res.status(400).json({ message: "Thiếu slug, tiêu đề hoặc link file" });
+  const { error } = await supabase
+    .from("resources")
+    .upsert(
+      { slug, title, description, file_url, is_published: !!is_published, sort_order: Number(sort_order) || 0 },
+      { onConflict: "slug" }
+    );
+  if (error) return res.status(500).json({ message: error.message });
+  res.json({ saved: true });
+});
+
+router.post("/resources/toggle", async (req, res) => {
+  if (!checkSecret(req, res)) return;
+  const { error } = await supabase.from("resources").update({ is_published: req.body.is_published }).eq("slug", req.body.slug);
+  if (error) return res.status(500).json({ message: error.message });
+  res.json({ ok: true });
+});
+
+router.post("/resources/delete", async (req, res) => {
+  if (!checkSecret(req, res)) return;
+  const { error } = await supabase.from("resources").delete().eq("slug", req.body.slug);
   if (error) return res.status(500).json({ message: error.message });
   res.json({ ok: true });
 });
@@ -266,6 +307,7 @@ router.get("/", (_req, res) => {
 
     <div class="tab-nav">
       <button class="tab-btn" data-tab="articles">Bài viết</button>
+      <button class="tab-btn" data-tab="resources">Tài nguyên</button>
       <button class="tab-btn" data-tab="courses">Khoá học</button>
       <button class="tab-btn" data-tab="scorecards">Đánh giá</button>
       <button class="tab-btn" data-tab="settings">Cài đặt hiển thị</button>
@@ -286,6 +328,25 @@ router.get("/", (_req, res) => {
       <button class="btn-primary" id="a_save">Thêm bài viết</button>
       <button class="btn-secondary" id="a_cancel" style="display:none">Huỷ sửa</button>
       <div id="a_msg" class="msg"></div>
+    </fieldset>
+    </div>
+
+    <div class="tab-panel" id="tab-resources" hidden>
+    <h2>Tài nguyên</h2>
+    <p class="muted">File để khách tải về (PDF, checklist, template...) — hiện trên Trang chủ.</p>
+    <table id="resourcesTable"><thead><tr><th>Tiêu đề</th><th>Hiện</th><th></th></tr></thead><tbody></tbody></table>
+    <fieldset>
+      <legend>Thêm tài nguyên mới</legend>
+      <div id="r_editing" class="editing-banner">Đang sửa tài nguyên có sẵn — sửa xong bấm "Cập nhật", hoặc "Huỷ" để bỏ.</div>
+      <label>Đường dẫn (slug) <input id="r_slug" placeholder="vi-du-tai-nguyen" /></label>
+      <label>Tiêu đề <input id="r_title" /></label>
+      <label>Mô tả ngắn <textarea id="r_desc"></textarea></label>
+      <label>Link file (PDF, Google Drive, v.v. — link phải xem/tải được công khai) <input id="r_file" placeholder="https://..." /></label>
+      <label>Thứ tự hiển thị (số nhỏ hiện trước) <input id="r_sort" type="number" value="1" /></label>
+      <div class="checkbox-row"><input type="checkbox" id="r_published" checked /><label style="margin:0">Hiển thị ngay</label></div>
+      <button class="btn-primary" id="r_save">Thêm tài nguyên</button>
+      <button class="btn-secondary" id="r_cancel" style="display:none">Huỷ sửa</button>
+      <div id="r_msg" class="msg"></div>
     </fieldset>
     </div>
 
@@ -335,10 +396,26 @@ router.get("/", (_req, res) => {
       <label>Tiêu đề <input id="s_title" /></label>
       <label>Mô tả ngắn <input id="s_desc" /></label>
       <div class="checkbox-row"><input type="checkbox" id="s_active" checked /><label style="margin:0">Đang dùng (hiện cho khách chọn)</label></div>
+      <details style="margin-top:12px">
+        <summary style="cursor:pointer; font-weight:600; font-size:13px">Hướng dẫn định dạng JSON (bấm để xem)</summary>
+        <div style="font-size:12.5px; line-height:1.6; margin-top:8px; color:#444">
+          <p><strong>Chỉ có đúng 1 định dạng được chấp nhận</strong> — nếu dán JSON từ ChatGPT/nguồn khác, khả năng cao tên trường sẽ khác và bị từ chối lưu (đây chính là lỗi từng gây trắng màn hình trước khi có bước kiểm tra này). Bấm "Chèn mẫu" bên dưới rồi sửa nội dung bên trong mẫu đó là cách an toàn nhất.</p>
+          <p>Các trường bắt buộc, đúng tên như sau:</p>
+          <ul style="margin:4px 0; padding-left:18px">
+            <li><code>title</code> — tiêu đề hiển thị trên đầu bài làm</li>
+            <li><code>scale.min</code>, <code>scale.max</code> — điểm nhỏ nhất/lớn nhất mỗi câu (VD 1 và 5)</li>
+            <li><code>scale.labels</code> — mảng nhãn, đúng số lượng = max - min + 1</li>
+            <li><code>areas</code> — mảng các mảng câu hỏi, mỗi mảng có <code>key</code> (mã, không dấu), <code>label</code> (tên hiển thị), <code>statements</code> (mảng câu hỏi)</li>
+            <li><code>tiers</code> — mảng mức kết quả tổng, mỗi mức có <code>name</code>, <code>min</code>, <code>max</code>, <code>message</code></li>
+            <li><code>areaBands</code> — mảng nhận xét theo từng mảng (không phải tổng), mỗi mức có <code>max</code> (điểm tối đa của mức) và <code>message</code>, xếp từ điểm thấp đến cao</li>
+          </ul>
+        </div>
+      </details>
       <label>Cấu hình chi tiết (JSON — mảng câu hỏi, thang điểm, ngưỡng kết quả)
         <textarea class="code" id="s_config" placeholder='{"scale": {...}, "areas": [...], "tiers": [...], "areaBands": [...]}'></textarea>
       </label>
-      <p class="muted">Chỉ sửa nếu quen thuộc với định dạng JSON — sai định dạng sẽ báo lỗi và không lưu, không làm hỏng dữ liệu hiện có.</p>
+      <button type="button" class="btn-secondary" id="s_template" style="margin-top:0">Chèn mẫu</button>
+      <p class="muted">Sai định dạng sẽ báo lỗi rõ và không lưu, không làm hỏng dữ liệu hiện có.</p>
       <button class="btn-primary" id="s_save">Thêm bộ đánh giá</button>
       <button class="btn-secondary" id="s_cancel" style="display:none">Huỷ sửa</button>
       <div id="s_msg" class="msg"></div>
@@ -349,6 +426,21 @@ router.get("/", (_req, res) => {
     <h2>Cài đặt hiển thị</h2>
     <p class="muted">Đổi chữ ở đây sẽ hiện ngay trên app, không cần đăng bản cập nhật mới.</p>
     <fieldset>
+      <legend>Banner đánh giá trên Trang chủ</legend>
+      <label>Tiêu đề banner <input id="set_home_banner_title" /></label>
+      <label>Mô tả banner <textarea id="set_home_banner_desc"></textarea></label>
+      <label>Chữ trên nút <input id="set_home_banner_cta_label" /></label>
+      <label>Dẫn đến bài đánh giá nào <select id="set_home_banner_scorecard_slug"></select></label>
+      <p class="muted">Để trống = tự động chọn bài đánh giá đầu tiên đang bật.</p>
+    </fieldset>
+    <fieldset>
+      <legend>Khối "Chương trình của Uplifting" trên Trang chủ</legend>
+      <label>Tiêu đề <input id="set_program_title" /></label>
+      <label>Mô tả <textarea id="set_program_desc"></textarea></label>
+      <label>Chữ trên nút <input id="set_program_cta_label" /></label>
+      <label>Link khi bấm nút (để trống = ẩn khối này) <input id="set_program_cta_url" placeholder="https://..." /></label>
+    </fieldset>
+    <fieldset>
       <legend>Banner khoá nội dung (hiện dưới cuối trang khoá học có bài bị khoá)</legend>
       <label>Tiêu đề banner <input id="set_lock_banner_title" /></label>
       <label>Mô tả banner <textarea id="set_lock_banner_desc"></textarea></label>
@@ -358,14 +450,14 @@ router.get("/", (_req, res) => {
       <label>Tiêu đề hộp thoại <input id="set_lock_modal_title" /></label>
       <label>Mô tả hộp thoại <textarea id="set_lock_modal_desc"></textarea></label>
     </fieldset>
-    <label>Chữ trên nút kêu gọi hành động (dùng chung cho cả hai) <input id="set_lock_cta_label" /></label>
+    <label>Chữ trên nút "mở khoá" (dùng chung cho banner khoá + hộp thoại) <input id="set_lock_cta_label" /></label>
     <button class="btn-primary" id="set_save">Lưu cài đặt hiển thị</button>
     <div id="set_msg" class="msg"></div>
     </div>
   </div>
 
   <script>
-    const TABS = ['articles', 'courses', 'scorecards', 'settings'];
+    const TABS = ['articles', 'resources', 'courses', 'scorecards', 'settings'];
     function selectTab(tab) {
       for (const t of TABS) {
         document.getElementById('tab-' + t).hidden = t !== tab;
@@ -397,7 +489,7 @@ router.get("/", (_req, res) => {
       el.className = 'msg ' + (ok ? 'ok' : 'error');
     }
 
-    let state = { articles: [], courses: [], lessons: [], scorecards: [] };
+    let state = { articles: [], courses: [], lessons: [], scorecards: [], resources: [] };
 
     // ---- generic edit-mode helper: lock the key field, show cancel/banner,
     // switch the save button's label so it's always clear which mode you're in.
@@ -459,6 +551,56 @@ router.get("/", (_req, res) => {
         document.getElementById('a_cancel').click();
         load();
       } catch (err) { showMsg('a_msg', 'Lỗi: ' + err.message, false); }
+    });
+
+    // ================= Tài nguyên =================
+    function renderResources() {
+      const tbody = document.querySelector('#resourcesTable tbody');
+      tbody.innerHTML = state.resources.map(r => \`
+        <tr>
+          <td>\${r.title}<div class="muted">\${r.slug}</div></td>
+          <td><input type="checkbox" \${r.is_published ? 'checked' : ''} onchange="toggleResource('\${r.slug}', this.checked)" /></td>
+          <td class="actions"><button class="btn-small" onclick="editResource('\${r.slug}')">Sửa</button><button class="btn-small danger" onclick="deleteResource('\${r.slug}')">Xoá</button></td>
+        </tr>\`).join('') || '<tr><td class="muted" colspan="3">Chưa có tài nguyên nào</td></tr>';
+    }
+    window.toggleResource = async (slug, is_published) => { await api('/resources/toggle', { slug, is_published }); load(); };
+    window.deleteResource = async (slug) => {
+      if (!confirm('Xoá vĩnh viễn tài nguyên này? Không hoàn tác được.')) return;
+      await api('/resources/delete', { slug }); load();
+    };
+    window.editResource = (slug) => {
+      const r = state.resources.find(x => x.slug === slug);
+      document.getElementById('r_slug').value = r.slug;
+      document.getElementById('r_slug').disabled = true;
+      document.getElementById('r_title').value = r.title || '';
+      document.getElementById('r_desc').value = r.description || '';
+      document.getElementById('r_file').value = r.file_url || '';
+      document.getElementById('r_sort').value = r.sort_order ?? 1;
+      document.getElementById('r_published').checked = r.is_published;
+      enterEditMode('r', 'Cập nhật tài nguyên');
+      document.getElementById('r_slug').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+    document.getElementById('r_cancel').addEventListener('click', () => {
+      document.getElementById('r_slug').disabled = false;
+      ['r_slug','r_title','r_desc','r_file'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('r_sort').value = 1;
+      document.getElementById('r_published').checked = true;
+      exitEditMode('r', 'Thêm tài nguyên');
+    });
+    document.getElementById('r_save').addEventListener('click', async () => {
+      try {
+        await api('/resources', {
+          slug: document.getElementById('r_slug').value.trim(),
+          title: document.getElementById('r_title').value.trim(),
+          description: document.getElementById('r_desc').value.trim(),
+          file_url: document.getElementById('r_file').value.trim(),
+          sort_order: document.getElementById('r_sort').value,
+          is_published: document.getElementById('r_published').checked,
+        });
+        showMsg('r_msg', 'Đã lưu!', true);
+        document.getElementById('r_cancel').click();
+        load();
+      } catch (err) { showMsg('r_msg', 'Lỗi: ' + err.message, false); }
     });
 
     // ================= Khoá học =================
@@ -603,6 +745,27 @@ router.get("/", (_req, res) => {
       enterEditMode('s', 'Cập nhật bộ đánh giá');
       document.getElementById('s_slug').scrollIntoView({ behavior: 'smooth', block: 'center' });
     };
+    const SCORECARD_TEMPLATE = {
+      title: 'Tên bài đánh giá',
+      scale: { min: 1, max: 5, labels: ['Hoàn toàn không đúng', 'Ít đúng', 'Đúng một phần', 'Khá đúng', 'Hoàn toàn đúng'] },
+      areas: [
+        { key: 'mang-1', label: 'Tên mảng 1', statements: ['Câu phát biểu 1', 'Câu phát biểu 2', 'Câu phát biểu 3'] },
+        { key: 'mang-2', label: 'Tên mảng 2', statements: ['Câu phát biểu 1', 'Câu phát biểu 2', 'Câu phát biểu 3'] },
+      ],
+      tiers: [
+        { name: 'Mức thấp', min: 6, max: 15, message: 'Nhận xét cho mức điểm tổng thấp.' },
+        { name: 'Mức cao', min: 16, max: 30, message: 'Nhận xét cho mức điểm tổng cao.' },
+      ],
+      areaBands: [
+        { max: 9, message: 'Nhận xét khi điểm mảng này thấp.' },
+        { max: 15, message: 'Nhận xét khi điểm mảng này cao.' },
+      ],
+    };
+    document.getElementById('s_template').addEventListener('click', () => {
+      const el = document.getElementById('s_config');
+      if (el.value.trim() && !confirm('Thay thế nội dung đang nhập bằng mẫu?')) return;
+      el.value = JSON.stringify(SCORECARD_TEMPLATE, null, 2);
+    });
     document.getElementById('s_cancel').addEventListener('click', () => {
       document.getElementById('s_slug').disabled = false;
       ['s_slug','s_title','s_desc','s_config'].forEach(id => document.getElementById(id).value = '');
@@ -625,10 +788,20 @@ router.get("/", (_req, res) => {
     });
 
     // ================= Cài đặt hiển thị =================
-    const SETTINGS_KEYS = ['lock_banner_title', 'lock_banner_desc', 'lock_modal_title', 'lock_modal_desc', 'lock_cta_label'];
+    const SETTINGS_KEYS = [
+      'home_banner_title', 'home_banner_desc', 'home_banner_cta_label', 'home_banner_scorecard_slug',
+      'program_title', 'program_desc', 'program_cta_label', 'program_cta_url',
+      'lock_banner_title', 'lock_banner_desc', 'lock_modal_title', 'lock_modal_desc', 'lock_cta_label',
+    ];
     function renderSettings() {
       const bySettingKey = Object.fromEntries((state.settings || []).map(s => [s.key, s.value]));
+      const slugSelect = document.getElementById('set_home_banner_scorecard_slug');
+      const prevValue = bySettingKey.home_banner_scorecard_slug ?? slugSelect.value;
+      slugSelect.innerHTML = '<option value="">(Tự động chọn)</option>' +
+        state.scorecards.map(s => \`<option value="\${s.slug}">\${s.title}</option>\`).join('');
+      slugSelect.value = prevValue;
       for (const key of SETTINGS_KEYS) {
+        if (key === 'home_banner_scorecard_slug') continue;
         const el = document.getElementById('set_' + key);
         if (el && bySettingKey[key] !== undefined) el.value = bySettingKey[key];
       }
@@ -649,7 +822,7 @@ router.get("/", (_req, res) => {
         state = await api('/data', {});
         document.getElementById('app').style.display = 'block';
         document.getElementById('loadMsg').textContent = '';
-        renderArticles(); renderCourses(); renderLessons(); renderScorecards(); renderSettings();
+        renderArticles(); renderCourses(); renderLessons(); renderScorecards(); renderSettings(); renderResources();
       } catch (err) {
         document.getElementById('loadMsg').textContent = 'Lỗi: ' + err.message;
       }

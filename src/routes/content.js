@@ -20,6 +20,15 @@ const SETTINGS_DEFAULTS = {
   lock_modal_desc:
     "Bài học này dành cho người đã đăng ký. Chia sẻ số điện thoại để xem miễn phí toàn bộ khoá học này và các khoá học khác.",
   lock_cta_label: "Đăng ký xem miễn phí",
+  home_banner_title: "Bạn đang cân bằng ở đâu?",
+  home_banner_desc: "Làm bài đánh giá miễn phí — chỉ 3 phút.",
+  home_banner_cta_label: "Bắt đầu",
+  home_banner_scorecard_slug: "",
+  program_title: "Chương trình của Uplifting",
+  program_desc:
+    "Tìm hiểu các chương trình coaching phù hợp với bạn — Uplifting sẽ đồng hành cùng bạn qua từng giai đoạn.",
+  program_cta_label: "Tìm hiểu thêm",
+  program_cta_url: "",
 };
 
 router.get("/settings", async (_req, res) => {
@@ -95,6 +104,39 @@ router.post("/lessons/:id/complete", requireSession, async (req, res) => {
   res.json({ completed: true });
 });
 
+// Powers Home's "Tiếp tục học" card: finds whichever course this contact
+// most recently made progress in (by completed_at) and the next lesson
+// they haven't finished yet. Returns { course: null } if they've never
+// completed a lesson — the client just doesn't render the card then.
+router.get("/progress", requireSession, async (req, res) => {
+  const { data: latest, error: latestError } = await supabase
+    .from("lesson_progress")
+    .select("completed_at, lessons!inner(course_slug)")
+    .eq("contact_id", req.session.contactId)
+    .order("completed_at", { ascending: false })
+    .limit(1);
+  if (latestError) return res.status(500).json({ message: latestError.message });
+  if (!latest.length) return res.json({ course: null });
+
+  const courseSlug = latest[0].lessons.course_slug;
+  const [{ data: course }, { data: lessons }, { data: progress }] = await Promise.all([
+    supabase.from("courses").select("slug, title").eq("slug", courseSlug).single(),
+    supabase.from("lessons").select("id, title, sort_order").eq("course_slug", courseSlug).order("sort_order"),
+    supabase.from("lesson_progress").select("lesson_id").eq("contact_id", req.session.contactId),
+  ]);
+  if (!course) return res.json({ course: null });
+
+  const completedIds = new Set(progress.map((p) => p.lesson_id));
+  const nextLesson = lessons.find((l) => !completedIds.has(l.id)) || null;
+
+  res.json({
+    course,
+    completedCount: lessons.filter((l) => completedIds.has(l.id)).length,
+    totalCount: lessons.length,
+    nextLesson,
+  });
+});
+
 router.get("/articles", async (_req, res) => {
   const { data, error } = await supabase
     .from("articles")
@@ -114,6 +156,19 @@ router.get("/articles/:slug", async (req, res) => {
     .single();
   if (error || !data) return res.status(404).json({ message: "Không tìm thấy bài viết" });
   res.json(data);
+});
+
+// Downloadable lead-magnet resources (PDFs, templates...) — the client
+// opens `file_url` directly (via zmp-sdk's openWebview), no detail page
+// needed since there's nothing to render beyond the file itself.
+router.get("/resources", async (_req, res) => {
+  const { data, error } = await supabase
+    .from("resources")
+    .select("slug, title, description, file_url")
+    .eq("is_published", true)
+    .order("sort_order");
+  if (error) return res.status(500).json({ message: error.message });
+  res.json({ resources: data });
 });
 
 export default router;
