@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import { recordMiniAppActivity } from "../lib/miniappActivity.js";
 
 // No expiresIn — same reasoning as 123gym-server: nothing behind this token
 // (scorecard results, course progress) is sensitive enough to force
@@ -13,10 +14,17 @@ export function requireSession(req, res, next) {
   if (!token) return res.status(401).json({ message: "Missing session token" });
   try {
     req.session = jwt.verify(token, process.env.SESSION_JWT_SECRET);
-    next();
   } catch {
-    res.status(401).json({ message: "Invalid or expired session" });
+    return res.status(401).json({ message: "Invalid or expired session" });
   }
+  trackActivity(req.session);
+  next();
+}
+
+// Ghi nhận khách đang dùng app (không await, không ném lỗi, có chặn tần suất
+// bên trong — xem lib/miniappActivity.js).
+function trackActivity(session) {
+  recordMiniAppActivity({ phone: session.phone, contactId: session.contactId });
 }
 
 // Same as requireSession but never rejects the request — used by routes that
@@ -31,6 +39,7 @@ export function optionalSession(req, res, next) {
   if (token) {
     try {
       req.session = jwt.verify(token, process.env.SESSION_JWT_SECRET);
+      trackActivity(req.session);
     } catch {
       // invalid/expired — treat the same as anonymous rather than rejecting
     }
