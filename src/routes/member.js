@@ -26,8 +26,9 @@ router.post("/followed-oa", requireSession, async (req, res) => {
 // Đồng bộ danh tính khi mở app (idempotent): lưu idByOA nếu đọc được và đồng bộ
 // trạng thái follow do Zalo báo. Đăng nhập chỉ chạy 1 lần nên khách vào app rồi
 // mới follow OA (hoặc mới cấp quyền) sẽ chỉ được ghi nhận nhờ route này.
-// Chặn tần suất trong bộ nhớ: mỗi khách tối đa 1 lần / 6 tiếng.
-const SYNC_THROTTLE_MS = 6 * 60 * 60 * 1000;
+// Chặn tần suất trong bộ nhớ: mỗi khách tối đa 1 lần / 5 phút (123 GYM không chặn gì,
+// gọi mỗi lần mở trang chủ; ở đây chỉ để mở/đóng app liên tục không dội lên GHL).
+const SYNC_THROTTLE_MS = 5 * 60 * 1000;
 const lastSync = new Map();
 router.post("/sync", requireSession, async (req, res) => {
   const { contactId } = req.session;

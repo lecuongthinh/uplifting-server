@@ -163,7 +163,7 @@ async function finish({ contactId, uid, phone }, result) {
 // thì việc chờ mất — chạy lại /admin/oa/tags/pull (OA→CRM) hoặc gắn lại tag để bù.
 const JOB_GAP_MS = 250;
 const RETRY_DELAYS_MS = [2000, 6000];
-const OA_PULL_THROTTLE_MS = 6 * 60 * 60 * 1000; // mỗi contact tối đa 1 lần kéo từ OA / 6 tiếng
+const OA_PULL_THROTTLE_MS = 60 * 1000; // mỗi contact tối đa 1 lần kéo từ OA / phút (chỉ để gộp tin nhắn dồn dập)
 const MAX_THROTTLE_TRACKED = 50000;
 const pending = new Map(); // contactId -> { contactId, origin }
 const lastOaPull = new Map();
@@ -175,7 +175,7 @@ export function queueStats() {
 }
 
 // origin "crm" (webhook GHL): luôn xếp hàng. origin "oa" (khách vừa có tương tác
-// OA): mỗi contact tối đa 1 lần / 6 tiếng, trừ khi force=true (bấm tay).
+// OA): mỗi contact tối đa 1 lần / phút, trừ khi force=true (bấm tay).
 export function enqueueOaTagSync(contactId, origin = "crm", { force = false } = {}) {
   const queued = pending.get(contactId);
   if (queued) {
