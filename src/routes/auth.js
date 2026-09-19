@@ -2,6 +2,7 @@ import { Router } from "express";
 import { resolvePhoneNumber } from "../lib/zaloRelay.js";
 import { findOrCreateContact, updateContactZaloUid, addContactTag } from "../lib/leadconnector.js";
 import { signSession } from "../middleware/session.js";
+import { afterMiniAppIdentity } from "../lib/identitySync.js";
 
 const router = Router();
 
@@ -9,7 +10,7 @@ const router = Router();
 // members), this app is an acquisition tool: an unmatched phone is a brand
 // new lead, so we create a GHL contact for them instead of rejecting.
 router.post("/zalo", async (req, res) => {
-  const { accessToken, phoneToken, idByOA, name } = req.body;
+  const { accessToken, phoneToken, idByOA, followedOA, name } = req.body;
   if (!accessToken || !phoneToken) {
     return res.status(400).json({ message: "Missing accessToken or phoneToken" });
   }
@@ -36,6 +37,10 @@ router.post("/zalo", async (req, res) => {
         console.error("[auth/zalo] new-lead tag failed:", err.message)
       );
     }
+
+    // Ghi nhận hoạt động + tag follow (nếu Zalo báo) + xét quà — sau khi đã có
+    // đủ thông tin, không chặn phản hồi.
+    afterMiniAppIdentity(contact, { idByOA, followedOA });
 
     res.json({
       sessionToken: signSession(contact),

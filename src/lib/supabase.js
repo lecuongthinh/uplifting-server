@@ -9,3 +9,7 @@ import { createClient } from "@supabase/supabase-js";
 export const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
   db: { schema: "uplifting_app" },
 });
+
+// Bọc lại để các module theo dõi/quà tặng (và test) lấy client qua hàm, cùng
+// kiểu với 123gym-server.
+export const getSupabase = () => supabase;

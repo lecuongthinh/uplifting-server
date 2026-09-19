@@ -8,6 +8,9 @@ import memberRoutes from "./routes/member.js";
 import contentAdminRoutes from "./routes/contentAdmin.js";
 import zaloConsentRoutes from "./routes/zaloConsent.js";
 import termsRoutes from "./routes/terms.js";
+import oaEventsRoutes from "./routes/oaEvents.js";
+import oaAdminRoutes from "./routes/oaAdmin.js";
+import ghlWebhookRoutes from "./routes/ghlWebhooks.js";
 
 const app = express();
 
@@ -16,7 +19,14 @@ const app = express();
 // the hard way on 123gym-server; set this from day one here instead.
 app.set("etag", false);
 app.use(cors());
-app.use(express.json());
+// rawBody: chữ ký webhook OA tính trên ĐÚNG byte Zalo gửi, nên phải giữ bản thô.
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      req.rawBody = buf.toString("utf8");
+    },
+  })
+);
 
 app.use((req, res, next) => {
   if (!req.path.startsWith("/api/")) return next();
@@ -32,7 +42,10 @@ app.use("/api/scorecards", scorecardRoutes);
 app.use("/api/content", contentRoutes);
 app.use("/api/member", memberRoutes);
 app.use("/admin/content", contentAdminRoutes);
+app.use("/admin/oa", oaAdminRoutes);
 app.use("/webhooks/zalo-consent", zaloConsentRoutes);
+app.use("/webhooks/oa-events", oaEventsRoutes);
+app.use("/webhooks", ghlWebhookRoutes);
 app.use("/dieu-khoan-su-dung", termsRoutes);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));

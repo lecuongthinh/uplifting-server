@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { supabase } from "../lib/supabase.js";
+import { OA_TAB_IDS, OA_TAB_BUTTONS, OA_PANELS, OA_SCRIPT } from "./oaAdminUi.js";
 
 const router = Router();
 
@@ -317,7 +318,7 @@ router.get("/", (_req, res) => {
       <button class="tab-btn" data-tab="resources">Tài nguyên</button>
       <button class="tab-btn" data-tab="courses">Khoá học</button>
       <button class="tab-btn" data-tab="scorecards">Đánh giá</button>
-      <button class="tab-btn" data-tab="settings">Cài đặt hiển thị</button>
+      <button class="tab-btn" data-tab="settings">Cài đặt hiển thị</button>${OA_TAB_BUTTONS}
     </div>
 
     <div class="tab-panel" id="tab-articles" hidden>
@@ -471,10 +472,12 @@ router.get("/", (_req, res) => {
     <button class="btn-primary" id="set_save">Lưu cài đặt hiển thị</button>
     <div id="set_msg" class="msg"></div>
     </div>
+${OA_PANELS}
   </div>
 
   <script>
-    const TABS = ['articles', 'resources', 'courses', 'scorecards', 'settings'];
+    const TABS = ['articles', 'resources', 'courses', 'scorecards', 'settings'].concat(${JSON.stringify(OA_TAB_IDS)});
+    const MINIAPP_ID = ${JSON.stringify(process.env.ZALO_MINI_APP_ID || "")};
     function selectTab(tab) {
       for (const t of TABS) {
         document.getElementById('tab-' + t).hidden = t !== tab;
@@ -837,6 +840,7 @@ router.get("/", (_req, res) => {
       } catch (err) { showMsg('set_msg', 'Lỗi: ' + err.message, false); }
     });
 
+${OA_SCRIPT}
     async function load() {
       document.getElementById('loadMsg').textContent = 'Đang tải...';
       try {
@@ -845,6 +849,7 @@ router.get("/", (_req, res) => {
         document.getElementById('app').style.display = 'block';
         document.getElementById('loadMsg').textContent = '';
         renderArticles(); renderCourses(); renderLessons(); renderScorecards(); renderSettings(); renderResources();
+        if (window.loadOaTabs) window.loadOaTabs();
       } catch (err) {
         document.getElementById('loadMsg').textContent = 'Lỗi: ' + err.message;
       }
