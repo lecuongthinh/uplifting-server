@@ -10,7 +10,7 @@ import {
   listCustomFields,
   listLocationTagNames,
 } from "../lib/leadconnector.js";
-import { exchangeAuthorizationCode, checkOaAuth, listOaTags, sendConsultationMessageUID } from "../lib/zalo.js";
+import { exchangeAuthorizationCode, makePkce, checkOaAuth, listOaTags, sendConsultationMessageUID } from "../lib/zalo.js";
 import { DYNAMIC_FIELDS, fieldStatus, ensureDynamicFields } from "../lib/dynamicFields.js";
 import { getMiniAppActivity } from "../lib/miniappActivity.js";
 import { getOaState } from "../lib/oaState.js";
@@ -55,16 +55,17 @@ const fail = (res, err, status = 500) => res.status(status).json({ message: err.
 // ── Cấp quyền OA lần đầu (lấy refresh token, lưu vào GHL Custom Value) ──────
 // Cần đăng ký đúng URL callback trong Zalo Developers (Official Account → cài
 // đặt callback URL). `state` chống giả mạo callback.
-const oauthStates = new Map(); // state -> hết hạn
+const oauthStates = new Map(); // state -> { exp, verifier }
 const backendBase = (req) => process.env.BACKEND_URL || `${req.protocol}://${req.get("host")}`;
 const callbackUrl = (req) => `${backendBase(req)}/admin/oa/zalo-oauth-callback`;
 
 router.get("/zalo-oauth-start", requireAdminSecret, (req, res) => {
   const state = crypto.randomBytes(16).toString("hex");
-  oauthStates.set(state, Date.now() + 10 * 60 * 1000);
+  const { verifier, challenge } = makePkce();
+  oauthStates.set(state, { exp: Date.now() + 10 * 60 * 1000, verifier });
   const url =
     `https://oauth.zaloapp.com/v4/oa/permission?app_id=${encodeURIComponent(process.env.ZALO_OA_APP_ID || "")}` +
-    `&redirect_uri=${encodeURIComponent(callbackUrl(req))}&state=${state}`;
+    `&redirect_uri=${encodeURIComponent(callbackUrl(req))}&code_challenge=${challenge}&state=${state}`;
   res.redirect(url);
 });
 
@@ -72,11 +73,11 @@ router.get("/zalo-oauth-start", requireAdminSecret, (req, res) => {
 // `state` do chính server vừa cấp ở bước start (đã qua mật khẩu).
 router.get("/zalo-oauth-callback", async (req, res) => {
   const { code, state } = req.query;
-  const exp = oauthStates.get(state);
+  const pending = oauthStates.get(state);
   oauthStates.delete(state);
-  if (!code || !exp || exp < Date.now()) return res.status(400).send("Phiên cấp quyền không hợp lệ hoặc đã hết hạn. Mở lại đường dẫn bắt đầu.");
+  if (!code || !pending || pending.exp < Date.now()) return res.status(400).send("Phiên cấp quyền không hợp lệ hoặc đã hết hạn. Mở lại đường dẫn bắt đầu.");
   try {
-    await exchangeAuthorizationCode(code);
+    await exchangeAuthorizationCode(code, pending.verifier);
     res.send("Đã cấp quyền OA thành công. Refresh token đã lưu vào GHL (Custom Value zalo_oa_refresh_token). Có thể đóng trang này.");
   } catch (err) {
     console.error("[oa-oauth] lỗi:", err.response?.data || err.message);

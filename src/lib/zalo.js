@@ -1,4 +1,5 @@
 import axios from "axios";
+import crypto from "crypto";
 import { getZaloRefreshTokenFromGHL, saveZaloRefreshTokenToGHL } from "./leadconnector.js";
 
 // Gọi API Zalo Official Account (gắn/gỡ nhãn, đọc thông tin người quan tâm,
@@ -85,13 +86,22 @@ async function refreshOAAccessToken() {
   return cachedOAToken;
 }
 
+// PKCE (RFC 7636): Zalo hỗ trợ code_challenge ở bước cấp quyền OA (app mới có thể
+// bắt buộc). Gửi luôn cả khi không bắt buộc thì vẫn tương thích. challenge =
+// base64url(sha256(verifier)); verifier gửi lại ở bước đổi code lấy token.
+export function makePkce() {
+  const verifier = crypto.randomBytes(48).toString("base64url"); // 64 ký tự, trong khoảng 43-128
+  const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
+  return { verifier, challenge };
+}
+
 // Dùng ở bước cấp quyền lần đầu: đổi `code` lấy token, lưu refresh token vào GHL.
-export async function exchangeAuthorizationCode(code) {
-  const { data } = await axios.post(
-    "https://oauth.zaloapp.com/v4/oa/access_token",
-    new URLSearchParams({ code, app_id: process.env.ZALO_OA_APP_ID, grant_type: "authorization_code" }),
-    { headers: { secret_key: process.env.ZALO_OA_APP_SECRET } }
-  );
+export async function exchangeAuthorizationCode(code, codeVerifier = null) {
+  const params = { code, app_id: process.env.ZALO_OA_APP_ID, grant_type: "authorization_code" };
+  if (codeVerifier) params.code_verifier = codeVerifier;
+  const { data } = await axios.post("https://oauth.zaloapp.com/v4/oa/access_token", new URLSearchParams(params), {
+    headers: { secret_key: process.env.ZALO_OA_APP_SECRET },
+  });
   if (!data.access_token || !data.refresh_token) {
     throw new Error(data.error_reason || data.error_name || "Zalo không trả token — code hết hạn hoặc app chưa gắn với OA");
   }
