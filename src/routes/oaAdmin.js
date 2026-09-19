@@ -56,7 +56,10 @@ const fail = (res, err, status = 500) => res.status(status).json({ message: err.
 // Cần đăng ký đúng URL callback trong Zalo Developers (Official Account → cài
 // đặt callback URL). `state` chống giả mạo callback.
 const oauthStates = new Map(); // state -> { exp, verifier }
-const backendBase = (req) => process.env.BACKEND_URL || `${req.protocol}://${req.get("host")}`;
+// Sau proxy của Render, req.protocol luôn là "http" — dùng x-forwarded-proto để callback
+// ra đúng https (Zalo đòi callback khớp chính xác địa chỉ đã đăng ký).
+const backendBase = (req) =>
+  process.env.BACKEND_URL || `${req.get("x-forwarded-proto") || req.protocol}://${req.get("host")}`;
 const callbackUrl = (req) => `${backendBase(req)}/admin/oa/zalo-oauth-callback`;
 
 router.get("/zalo-oauth-start", requireAdminSecret, (req, res) => {
