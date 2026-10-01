@@ -59,13 +59,25 @@ router.post("/settings", async (req, res) => {
 // and edits (upsert), so the client is responsible for locking the slug
 // field once editing an existing row (see the page's JS) — otherwise
 // changing it here would silently create a new row instead of updating.
+const MID_PROMO_VALUES = ["auto", "always", "never"];
+
 router.post("/articles", async (req, res) => {
   if (!checkSecret(req, res)) return;
-  const { slug, title, excerpt, body, cover_image_url, is_published } = req.body;
+  const { slug, title, excerpt, body, cover_image_url, is_published, mid_promo } = req.body;
   if (!slug || !title) return res.status(400).json({ message: "Thiếu slug hoặc tiêu đề" });
-  const { error } = await supabase
-    .from("articles")
-    .upsert({ slug, title, excerpt, body, cover_image_url: cover_image_url || null, is_published: !!is_published }, { onConflict: "slug" });
+  if (mid_promo && !MID_PROMO_VALUES.includes(mid_promo)) return res.status(400).json({ message: "Giá trị khối khám phá giữa bài không hợp lệ" });
+  const { error } = await supabase.from("articles").upsert(
+    {
+      slug,
+      title,
+      excerpt,
+      body,
+      cover_image_url: cover_image_url || null,
+      is_published: !!is_published,
+      mid_promo: mid_promo || "auto",
+    },
+    { onConflict: "slug" }
+  );
   if (error) return res.status(500).json({ message: error.message });
   res.json({ saved: true });
 });
@@ -332,6 +344,13 @@ router.get("/", (_req, res) => {
       <label>Tóm tắt ngắn <input id="a_excerpt" /></label>
       <label>Nội dung <textarea id="a_body"></textarea></label>
       <label>Link ảnh bìa (tuỳ chọn) <input id="a_cover" /></label>
+      <label>Khối "Khám phá thêm" giữa bài
+        <select id="a_mid_promo">
+          <option value="auto">Tự động (bài dài mới chèn giữa)</option>
+          <option value="always">Luôn chèn giữa bài</option>
+          <option value="never">Không chèn giữa bài (chỉ ở cuối nếu bài ngắn)</option>
+        </select>
+      </label>
       <div class="checkbox-row"><input type="checkbox" id="a_published" checked /><label style="margin:0">Hiển thị ngay</label></div>
       <button class="btn-primary" id="a_save">Thêm bài viết</button>
       <button class="btn-secondary" id="a_cancel" style="display:none">Huỷ sửa</button>
@@ -547,6 +566,7 @@ ${OA_PANELS}
       document.getElementById('a_excerpt').value = a.excerpt || '';
       document.getElementById('a_body').value = a.body || '';
       document.getElementById('a_cover').value = a.cover_image_url || '';
+      document.getElementById('a_mid_promo').value = a.mid_promo || 'auto';
       document.getElementById('a_published').checked = a.is_published;
       enterEditMode('a', 'Cập nhật bài viết');
       document.getElementById('a_slug').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -554,6 +574,7 @@ ${OA_PANELS}
     document.getElementById('a_cancel').addEventListener('click', () => {
       document.getElementById('a_slug').disabled = false;
       ['a_slug','a_title','a_excerpt','a_body','a_cover'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('a_mid_promo').value = 'auto';
       document.getElementById('a_published').checked = true;
       exitEditMode('a', 'Thêm bài viết');
     });
@@ -565,6 +586,7 @@ ${OA_PANELS}
           excerpt: document.getElementById('a_excerpt').value.trim(),
           body: document.getElementById('a_body').value,
           cover_image_url: document.getElementById('a_cover').value.trim(),
+          mid_promo: document.getElementById('a_mid_promo').value,
           is_published: document.getElementById('a_published').checked,
         });
         showMsg('a_msg', 'Đã lưu!', true);

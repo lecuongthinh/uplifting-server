@@ -148,9 +148,11 @@ router.get("/articles", async (_req, res) => {
 });
 
 router.get("/articles/:slug", async (req, res) => {
+  // excerpt thêm vào đây (list đã có sẵn) — dùng làm mô tả khi chia sẻ bài viết
+  // (zmp_deep_link share card), không hiển thị trong thân trang.
   const { data, error } = await supabase
     .from("articles")
-    .select("slug, title, body, cover_image_url, published_at")
+    .select("slug, title, excerpt, body, cover_image_url, mid_promo, published_at")
     .eq("slug", req.params.slug)
     .eq("is_published", true)
     .single();
